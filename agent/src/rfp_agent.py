@@ -11,12 +11,17 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Annotated, Literal, TypedDict
+import re
+import uuid
+from typing import Annotated, Any, Literal, TypedDict
 
 import httpx
 from copilotkit import CopilotKitMiddleware, a2ui
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -538,6 +543,240 @@ fetch company context, then render the cockpit. Do not generate custom A2UI sche
 """
 
 
+# ─── Deterministic demo model ─────────────────────────────────────────────────
+
+def _message_text(message: BaseMessage) -> str:
+    content = message.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return str(content)
+
+
+def _latest_user_text(messages: list[BaseMessage]) -> str:
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            text = _message_text(message).strip()
+            if text:
+                return text
+    return ""
+
+
+def _demo_company_name(text: str) -> str:
+    patterns = [
+        r"(?:company|customer|client)\s*(?:is|:)\s*([A-Z][A-Za-z0-9&.,' -]{2,60})",
+        r"\bfor\s+([A-Z][A-Za-z0-9&.,' -]{2,60})",
+        r"\bat\s+([A-Z][A-Za-z0-9&.,' -]{2,60})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            name = re.split(r"[,.;\n]", match.group(1).strip())[0].strip()
+            if name and len(name.split()) <= 6:
+                return name
+    return "Acme Precision Manufacturing"
+
+
+def _demo_archetype(text: str) -> Literal["RTLS", "MES", "UNKNOWN"]:
+    lower = text.lower()
+    mes_hits = sum(1 for signal in MES_SIGNALS if signal in lower)
+    rtls_hits = sum(1 for signal in RTLS_SIGNALS if signal in lower)
+    if mes_hits > rtls_hits:
+        return "MES"
+    if rtls_hits:
+        return "RTLS"
+    return "RTLS"
+
+
+def _demo_field(
+    name: str,
+    value: str,
+    status: Literal["STATED", "INFERRED", "MISSING"],
+    source_quote: str,
+) -> DealField:
+    blocker = ALL_BLOCKERS_BY_NAME[name]
+    return {
+        "name": name,
+        "label": blocker["label"],
+        "value": value,
+        "status": status,
+        "source_quote": source_quote,
+        "why_it_matters": blocker["why_it_matters"] if status == "MISSING" else "",
+    }
+
+
+def _demo_extract_args(text: str) -> dict[str, Any]:
+    archetype = _demo_archetype(text)
+    company = _demo_company_name(text)
+    lower = text.lower()
+
+    fields: list[DealField] = [
+        _demo_field(
+            "business_objective",
+            "Reduce asset search time and audit exposure before the next operational review.",
+            "STATED" if any(word in lower for word in ["audit", "lost", "search", "warehouse", "asset"]) else "INFERRED",
+            text[:220],
+        ),
+        _demo_field(
+            "security_it_constraints",
+            "IT/security review is required before rollout; deployment constraints need confirmation.",
+            "INFERRED",
+            "Enterprise operational system implies IT/security review before production rollout.",
+        ),
+    ]
+
+    if "q3" in lower or "quarter" in lower:
+        fields.append(_demo_field(
+            "success_criteria",
+            "Target go-live timing is tied to Q3; acceptance metrics still need to be made explicit.",
+            "INFERRED",
+            "Timeline pressure implies acceptance criteria are needed before scope can lock.",
+        ))
+
+    if archetype == "RTLS":
+        fields.extend([
+            _demo_field(
+                "customer_problem_definition",
+                "The customer needs real-time visibility into warehouse assets and zones.",
+                "STATED" if "warehouse" in lower or "tracking" in lower or "rtls" in lower else "INFERRED",
+                text[:220],
+            ),
+            _demo_field(
+                "rtls_requirements",
+                "RTLS is required; accuracy, refresh rate, tag count, and zone model are not yet confirmed.",
+                "INFERRED",
+                "RTLS/tracking request gives the solution direction, but not the technical spec.",
+            ),
+            _demo_field(
+                "site_information",
+                "",
+                "MISSING",
+                "",
+            ),
+            _demo_field(
+                "network_infrastructure",
+                "",
+                "MISSING",
+                "",
+            ),
+            _demo_field(
+                "erp_system_integration",
+                "",
+                "MISSING",
+                "",
+            ),
+        ])
+    else:
+        fields.extend([
+            _demo_field(
+                "production_process_definition",
+                "Manufacturing execution scope is implied; station flow and routing need confirmation.",
+                "INFERRED",
+                "MES request implies process-flow scope, but the process definition is not complete.",
+            ),
+            _demo_field(
+                "machine_connectivity_readiness",
+                "",
+                "MISSING",
+                "",
+            ),
+            _demo_field(
+                "erp_integration_scope",
+                "",
+                "MISSING",
+                "",
+            ),
+            _demo_field(
+                "poc_expectations",
+                "",
+                "MISSING",
+                "",
+            ),
+        ])
+
+    return {
+        "archetype": archetype,
+        "company_name": company,
+        "company_website": "",
+        "fields": fields,
+    }
+
+
+class DemoRFPModel(BaseChatModel):
+    """Deterministic RFP model for recording mode.
+
+    It drives the real tools, but does not call Gemini. This keeps the A2UI
+    surface, deal store, readiness scoring, and batch-update loop intact while
+    removing streaming failures from the demo-critical first turn.
+    """
+
+    @property
+    def _llm_type(self) -> str:
+        return "rfp-demo-stub"
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "DemoRFPModel":
+        return self
+
+    def bind(self, **kwargs: Any) -> "DemoRFPModel":
+        return self
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        tool_names = [getattr(m, "name", "") for m in messages if isinstance(m, ToolMessage)]
+
+        if "extract_seed_fields" not in tool_names:
+            user_text = _latest_user_text(messages)
+            message: BaseMessage = AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "extract_seed_fields",
+                    "args": _demo_extract_args(user_text),
+                    "id": f"call_{uuid.uuid4().hex[:12]}",
+                }],
+            )
+        elif "enrich_from_linkup" not in tool_names:
+            user_text = _latest_user_text(messages)
+            query = _demo_company_name(user_text)
+            message = AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "enrich_from_linkup",
+                    "args": {"query": query},
+                    "id": f"call_{uuid.uuid4().hex[:12]}",
+                }],
+            )
+        elif "render_deal_context" not in tool_names:
+            message = AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "render_deal_context",
+                    "args": {},
+                    "id": f"call_{uuid.uuid4().hex[:12]}",
+                }],
+            )
+        else:
+            message = AIMessage(
+                content=(
+                    "I built the intake cockpit on the right. Confirm or correct inferred "
+                    "fields there, answer any gaps you know, then update the cockpit once."
+                )
+            )
+
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
 # ─── Agent factory ────────────────────────────────────────────────────────────
 
 def _build_model() -> ChatGoogleGenerativeAI:
@@ -548,9 +787,14 @@ def _build_model() -> ChatGoogleGenerativeAI:
 
 
 def build_rfp_agent():
-    if os.getenv("OFFLINE") == "1":
-        from src.offline_fixed import build_offline_fixed_agent
-        return build_offline_fixed_agent(render_deal_context, SYSTEM_PROMPT)
+    if os.getenv("RFP_LIVE_LLM") != "1":
+        return create_agent(
+            model=DemoRFPModel(),
+            tools=[extract_seed_fields, enrich_from_linkup, apply_canvas_updates, render_deal_context],
+            middleware=[CopilotKitMiddleware()],
+            system_prompt=SYSTEM_PROMPT,
+            checkpointer=MemorySaver(),
+        )
 
     return create_agent(
         model=_build_model(),
