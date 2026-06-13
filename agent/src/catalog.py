@@ -75,6 +75,8 @@ component must have `id: "root"`.
     Completeness bar. Climbs as hard blockers are filled. Use at the top of the DealContextCard surface.
 - **TextInput** { fieldName: string, label: string, placeholder?: string }
     Inline text input with Save button. Dispatches submit_field event {fieldName, value} on save. Place inside MISSING field cards so the rep can answer directly in the canvas.
+- **MultiFieldForm** { fields: [{ fieldName, label, placeholder? }], submitLabel?: string }
+    Compact form for answering multiple missing fields at once. Dispatches submit_fields event {fields:[{fieldName,value,status:"STATED"}]} on save.
 
 ### Rules
 1. Exactly one component has id="root". Everything else must be reachable from root.

@@ -1108,6 +1108,77 @@ const TextInput = ({
   );
 };
 
+const MultiFieldForm = ({
+  props,
+  dispatch,
+}: RendererProps<{
+  fields: { fieldName: string; label: string; placeholder?: string }[];
+  submitLabel?: string;
+}>) => {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const filled = (props.fields ?? [])
+    .map((field) => ({
+      fieldName: field.fieldName,
+      value: (values[field.fieldName] ?? "").trim(),
+      status: "STATED",
+    }))
+    .filter((field) => field.value);
+
+  const submit = () => {
+    if (!filled.length) return;
+    dispatch?.({
+      event: {
+        name: "submit_fields",
+        context: { fields: filled },
+      },
+    } as never);
+    setValues({});
+  };
+
+  return (
+    <div className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <span className="mono text-[11px] uppercase tracking-[0.12em] text-[var(--ink)] font-semibold">
+          Answer multiple gaps
+        </span>
+        <span className="text-[12.5px] text-[var(--ink-2)]">
+          Fill any fields you know, then save them together.
+        </span>
+      </div>
+      {(props.fields ?? []).map((field) => (
+        <label key={field.fieldName} className="flex flex-col gap-1.5">
+          <span className="text-[12px] font-medium text-[var(--ink)]">
+            {field.label}
+          </span>
+          <input
+            type="text"
+            value={values[field.fieldName] ?? ""}
+            onChange={(e) =>
+              setValues((current) => ({
+                ...current,
+                [field.fieldName]: e.target.value,
+              }))
+            }
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit();
+            }}
+            placeholder={field.placeholder ?? "Type your answer…"}
+            className="w-full px-3 py-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] text-[13px] text-[var(--ink)] focus:outline-none focus:border-[var(--brand-primary,var(--ink-2))] transition"
+          />
+        </label>
+      ))}
+      <button
+        type="button"
+        disabled={!filled.length}
+        onClick={submit}
+        className="self-start px-4 py-2 rounded-[10px] bg-[var(--ink)] text-white mono text-[11px] font-medium disabled:opacity-40 transition"
+      >
+        {props.submitLabel ?? "Save answers"}
+      </button>
+    </div>
+  );
+};
+
 const DealContextCard = ({
   props,
 }: RendererProps<{
@@ -1210,6 +1281,7 @@ export const renderers = {
   Button,
   ChoiceChips,
   TextInput,
+  MultiFieldForm,
   DealContextCard,
   ReadinessMeter,
 };

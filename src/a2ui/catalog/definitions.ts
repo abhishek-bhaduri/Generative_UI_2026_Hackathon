@@ -289,6 +289,22 @@ export const definitions = {
     }),
   },
 
+  MultiFieldForm: {
+    description:
+      "Small multi-field form for answering several missing RFP blockers at once. " +
+      "Dispatches a 'submit_fields' event with { fields: [{ fieldName, value, status }] }.",
+    props: z.object({
+      fields: z.array(
+        z.object({
+          fieldName: z.string(),
+          label: z.string(),
+          placeholder: z.string().optional(),
+        }),
+      ),
+      submitLabel: z.string().optional(),
+    }),
+  },
+
   DealContextCard: {
     description:
       "RFP intake field card. Shows a single deal field with its status badge " +

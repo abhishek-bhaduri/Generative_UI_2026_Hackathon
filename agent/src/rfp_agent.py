@@ -28,6 +28,7 @@ from src.rfp_hard_blockers import (
     PROVISIONAL,
     RTLS_SIGNALS,
     MES_SIGNALS,
+    ALL_BLOCKERS_BY_NAME,
     compute_readiness,
     get_blockers_for_archetype,
 )
@@ -46,6 +47,12 @@ class DealField(TypedDict):
     status: Literal["STATED", "INFERRED", "MISSING"]
     source_quote: str
     why_it_matters: str
+
+
+class FieldUpdate(TypedDict):
+    fieldName: str
+    value: str
+    status: Literal["STATED", "CONFIRMED"]
 
 
 # ─── thread_id helper ─────────────────────────────────────────────────────────
@@ -171,6 +178,51 @@ def enrich_from_linkup(
 
 
 @tool
+def apply_canvas_updates(
+    fields: list[FieldUpdate],
+    config: Annotated[RunnableConfig, InjectedToolArg],
+) -> str:
+    """Apply one or more answers submitted from the canvas.
+
+    Use this when a log_a2ui_event arrives with event name "submit_field",
+    "submit_fields", or "confirm_field". Then call render_deal_context.
+    """
+    tid = _thread_id(config)
+    deal = get_deal(tid) or {}
+    archetype = deal.get("archetype", "UNKNOWN")
+    existing_fields = deal.get("fields", {})
+
+    updated: list[str] = []
+    for update in fields:
+        name = update["fieldName"]
+        value = update["value"].strip()
+        if not name or not value:
+            continue
+
+        blocker = ALL_BLOCKERS_BY_NAME.get(name, {})
+        prior = existing_fields.get(name, {})
+        status = update.get("status", "STATED")
+        existing_fields[name] = {
+            "label": prior.get("label") or blocker.get("label", name.replace("_", " ").title()),
+            "value": value,
+            "status": status,
+            "source_quote": value,
+            "why_it_matters": prior.get("why_it_matters") or blocker.get("why_it_matters", ""),
+        }
+        updated.append(name)
+
+    deal["fields"] = existing_fields
+    deal["readiness"] = compute_readiness(existing_fields, archetype)
+    set_deal(tid, deal)
+
+    return json.dumps({
+        "ok": True,
+        "updated": updated,
+        "readiness": deal["readiness"],
+    })
+
+
+@tool
 def render_deal_context(
     config: Annotated[RunnableConfig, InjectedToolArg],
 ) -> str:
@@ -265,7 +317,7 @@ def _build_components(
     comps.append({"id": "r-label", "component": "Text", "text": "Readiness", "size": "sm", "tone": "muted"})
     comps.append({"id": "r-badge", "component": "Badge", "label": f"{readiness_pct}%", "tone": r_tone})
 
-    def add_field_card(f: dict, interactive: bool = False) -> None:
+    def add_field_card(f: dict, mode: str = "read") -> None:
         fid = f["name"]
         s_tone = {"STATED": "positive", "INFERRED": "warning", "MISSING": "danger"}.get(f["status"], "neutral")
         card_tone = "default" if f["status"] in ("STATED", "CONFIRMED") else "warning" if f["status"] == "INFERRED" else "default"
@@ -273,7 +325,9 @@ def _build_components(
         body_text = f["value"] if f["status"] in ("STATED", "INFERRED") and f.get("value") else f.get("why_it_matters", "Required — not yet captured.")
 
         inner_children = [f"badge-{fid}", f"text-{fid}"]
-        if interactive and f["status"] == "MISSING":
+        if mode == "confirm" and f["status"] == "INFERRED":
+            inner_children.extend([f"confirm-row-{fid}", f"input-{fid}"])
+        elif mode == "input" and f["status"] == "MISSING":
             inner_children.append(f"input-{fid}")
 
         comps.append({"id": f"card-{fid}", "component": "Card", "child": f"inner-{fid}", "tone": card_tone})
@@ -281,7 +335,31 @@ def _build_components(
         comps.append({"id": f"badge-{fid}", "component": "Badge", "label": f["label"] + " · " + f["status"], "tone": s_tone})
         comps.append({"id": f"text-{fid}", "component": "Text", "text": body_text, "size": "sm", "tone": "muted" if f["status"] == "MISSING" else "default"})
 
-        if interactive and f["status"] == "MISSING":
+        if mode == "confirm" and f["status"] == "INFERRED":
+            comps.append({"id": f"confirm-row-{fid}", "component": "Row", "children": [f"confirm-{fid}"], "gap": "sm"})
+            comps.append({
+                "id": f"confirm-{fid}",
+                "component": "Button",
+                "label": "Confirm",
+                "variant": "secondary",
+                "action": {
+                    "event": {
+                        "name": "confirm_field",
+                        "context": {
+                            "fieldName": fid,
+                            "value": f.get("value", ""),
+                        },
+                    },
+                },
+            })
+            comps.append({
+                "id": f"input-{fid}",
+                "component": "TextInput",
+                "fieldName": fid,
+                "label": f["label"],
+                "placeholder": "If this is wrong, type the correct info…",
+            })
+        elif mode == "input" and f["status"] == "MISSING":
             comps.append({
                 "id": f"input-{fid}",
                 "component": "TextInput",
@@ -302,7 +380,7 @@ def _build_components(
         comps.append({"id": "inferred-section", "component": "Section", "title": f"Inferred ({len(inferred)})", "child": "inferred-stack"})
         comps.append({"id": "inferred-stack", "component": "Stack", "children": [f"card-{f['name']}" for f in inferred], "gap": "sm"})
         for f in inferred:
-            add_field_card(f)
+            add_field_card(f, mode="confirm")
 
     # MISSING — show top 3 priority gaps only; summarise the rest
     if missing:
@@ -311,11 +389,25 @@ def _build_components(
         section_title = f"Top gaps to chase ({len(missing)} total)"
         comps.append({"id": "missing-section", "component": "Section", "title": section_title, "child": "missing-stack"})
         stack_children = [f"card-{f['name']}" for f in top_missing]
+        stack_children.append("missing-form")
         if rest_count:
             stack_children.append("missing-more")
         comps.append({"id": "missing-stack", "component": "Stack", "children": stack_children, "gap": "sm"})
         for f in top_missing:
-            add_field_card(f, interactive=True)
+            add_field_card(f)
+        comps.append({
+            "id": "missing-form",
+            "component": "MultiFieldForm",
+            "fields": [
+                {
+                    "fieldName": f["name"],
+                    "label": f["label"],
+                    "placeholder": f"Answer {f['label'].lower()}…",
+                }
+                for f in top_missing
+            ],
+            "submitLabel": "Save answers",
+        })
         if rest_count:
             comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the questions above to unlock them.", "size": "sm", "tone": "muted"})
 
@@ -392,12 +484,15 @@ After rendering, ask about the top 2–3 MISSING hard blockers. Batch your quest
 For each, explain WHY it matters using the deal-killer rationale. One clear ask per blocker.
 The canvas already shows TextInput boxes for the top 3 gaps — remind the user they can type directly in the canvas OR answer here in chat.
 
-### Handling canvas input events (log_a2ui_event)
-When you receive a `log_a2ui_event` tool result with event name "submit_field":
-1. Extract `fieldName` and `value` from the context.
-2. Call `extract_seed_fields` with that field as status="STATED", value=the submitted value, source_quote=the submitted value. Keep all other fields unchanged by re-extracting them from deal state.
-3. Call `render_deal_context` to update the canvas with the new value.
-4. Acknowledge the update briefly in chat and ask about the next most important gap.
+### Handling canvas events (log_a2ui_event)
+When you receive a `log_a2ui_event` tool result:
+- "submit_field": extract context.fieldName + context.value, call `apply_canvas_updates`
+  with one field as status="STATED", then call `render_deal_context`.
+- "submit_fields": extract context.fields, call `apply_canvas_updates` with every
+  non-empty field as status="STATED", then call `render_deal_context`.
+- "confirm_field": extract context.fieldName + context.value, call `apply_canvas_updates`
+  with one field as status="CONFIRMED", then call `render_deal_context`.
+After any canvas update, acknowledge briefly and ask only for the next most important gap.
 
 ## Hard rules
 - Call `extract_seed_fields` BEFORE `render_deal_context` on every turn with new info.
@@ -432,7 +527,7 @@ def build_rfp_agent():
 
     return create_agent(
         model=_build_model(),
-        tools=[extract_seed_fields, enrich_from_linkup, render_deal_context],
+        tools=[extract_seed_fields, enrich_from_linkup, apply_canvas_updates, render_deal_context],
         middleware=[CopilotKitMiddleware()],
         system_prompt=SYSTEM_PROMPT,
         checkpointer=MemorySaver(),
