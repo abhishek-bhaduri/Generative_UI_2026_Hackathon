@@ -623,6 +623,57 @@ def _latest_user_text(messages: list[BaseMessage]) -> str:
     return ""
 
 
+def _tool_name(message: ToolMessage) -> str:
+    name = getattr(message, "name", None)
+    return name if isinstance(name, str) else ""
+
+
+def _parse_a2ui_fields(content: str) -> list[FieldUpdate]:
+    context: Any = None
+    if content.strip().startswith("{"):
+        try:
+            context = json.loads(content)
+        except json.JSONDecodeError:
+            context = None
+
+    if context is None:
+        match = re.search(r"Context:\s*(\{.*\})", content, flags=re.DOTALL)
+        if match:
+            try:
+                context = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                context = None
+
+    if isinstance(context, dict) and "context" in context and isinstance(context["context"], dict):
+        context = context["context"]
+
+    if isinstance(context, dict) and "userAction" in context and isinstance(context["userAction"], dict):
+        action = context["userAction"]
+        if action.get("name") != "submit_fields":
+            return []
+        context = action.get("context")
+    elif "submit_fields" not in content:
+        return []
+
+    raw_fields = context.get("fields") if isinstance(context, dict) else None
+    if not isinstance(raw_fields, list):
+        return []
+
+    fields: list[FieldUpdate] = []
+    for raw in raw_fields:
+        if not isinstance(raw, dict):
+            continue
+        field_name = raw.get("fieldName")
+        value = raw.get("value")
+        status = raw.get("status", "STATED")
+        if not isinstance(field_name, str) or not isinstance(value, str):
+            continue
+        if status not in ("STATED", "CONFIRMED"):
+            status = "STATED"
+        fields.append({"fieldName": field_name, "value": value, "status": status})
+    return fields
+
+
 def _demo_company_name(text: str) -> str:
     patterns = [
         r"(?:company|customer|client)\s*(?:is|:)\s*([A-Z][A-Za-z0-9&.,' -]{2,60})",
@@ -788,24 +839,48 @@ class DemoRFPModel(BaseChatModel):
         run_manager: Any | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        tool_names = [getattr(m, "name", "") for m in messages if isinstance(m, ToolMessage)]
+        tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
+        tool_names = [_tool_name(m) for m in tool_messages]
+        latest_tool = _tool_name(tool_messages[-1]) if tool_messages else ""
 
-        if "extract_seed_fields" not in tool_names:
+        if latest_tool == "log_a2ui_event":
+            fields = _parse_a2ui_fields(_message_text(tool_messages[-1]))
+            if fields:
+                message: BaseMessage = AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "apply_canvas_updates",
+                        "args": {"fields": fields},
+                        "id": f"call_{uuid.uuid4().hex[:12]}",
+                    }],
+                )
+            else:
+                message = AIMessage(content="I received the update, but there were no filled fields to apply yet.")
+        elif latest_tool == "apply_canvas_updates":
+            message = AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "render_deal_context",
+                    "args": {},
+                    "id": f"call_{uuid.uuid4().hex[:12]}",
+                }],
+            )
+        elif latest_tool == "render_deal_context":
+            message = AIMessage(
+                content=(
+                    "I updated the intake cockpit on the right. Confirm or correct inferred "
+                    "fields there, answer any gaps you know, then update the cockpit once."
+                )
+            )
+        elif "extract_seed_fields" not in tool_names:
             user_text = _latest_user_text(messages)
-            message: BaseMessage = AIMessage(
+            message = AIMessage(
                 content="",
                 tool_calls=[{
                     "name": "extract_seed_fields",
                     "args": _demo_extract_args(user_text),
                     "id": f"call_{uuid.uuid4().hex[:12]}",
                 }],
-            )
-        elif "render_deal_context" in tool_names:
-            message = AIMessage(
-                content=(
-                    "I built the intake cockpit on the right. Confirm or correct inferred "
-                    "fields there, answer any gaps you know, then update the cockpit once."
-                )
             )
         elif "enrich_from_linkup" not in tool_names:
             user_text = _latest_user_text(messages)
