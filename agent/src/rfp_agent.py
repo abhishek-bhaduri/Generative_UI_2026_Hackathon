@@ -291,12 +291,20 @@ def _build_components(
         for f in inferred:
             add_field_card(f)
 
-    # MISSING
+    # MISSING — show top 3 priority gaps only; summarise the rest
     if missing:
-        comps.append({"id": "missing-section", "component": "Section", "title": f"Gaps to chase ({len(missing)})", "child": "missing-stack"})
-        comps.append({"id": "missing-stack", "component": "Stack", "children": [f"card-{f['name']}" for f in missing], "gap": "sm"})
-        for f in missing:
+        top_missing = missing[:3]
+        rest_count = len(missing) - len(top_missing)
+        section_title = f"Top gaps to chase ({len(missing)} total)"
+        comps.append({"id": "missing-section", "component": "Section", "title": section_title, "child": "missing-stack"})
+        stack_children = [f"card-{f['name']}" for f in top_missing]
+        if rest_count:
+            stack_children.append("missing-more")
+        comps.append({"id": "missing-stack", "component": "Stack", "children": stack_children, "gap": "sm"})
+        for f in top_missing:
             add_field_card(f)
+        if rest_count:
+            comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the questions above to unlock them.", "size": "sm", "tone": "muted"})
 
     return comps
 
@@ -327,10 +335,36 @@ Classify the dump as "RTLS", "MES", or "UNKNOWN".
 Call `extract_seed_fields` with:
   - archetype ("RTLS", "MES", or "UNKNOWN")
   - company_name and company_website if mentioned (else empty string)
-  - All fields you can identify from the RTLS or MES blocker list
+  - fields: extract EVERY field you can identify using THESE EXACT field names:
 
-For STATED fields: include the verbatim source_quote.
-For MISSING fields: include a one-sentence why_it_matters deal-killer rationale.
+**Universal fields (both archetypes):**
+  - business_objective — measurable KPI / goal (e.g. "OEE +8%", "asset loss -30%")
+  - success_criteria — agreed UAT acceptance metrics
+  - decision_makers — executive sponsor + technical owner + sign-off chain
+  - security_it_constraints — IT/security policies, on-prem vs cloud, approval process
+
+**RTLS-specific fields:**
+  - customer_problem_definition — the business problem (NOT the solution)
+  - site_information — building count, sq footage, zones, machine types, PLC brands
+  - network_infrastructure — Wi-Fi/wireless details, VLANs, latency, coverage
+  - rtls_requirements — accuracy target, refresh rate, tag count, zone structure
+  - erp_system_integration — ERP name + version, API method, data flow, team
+
+**MES-specific fields:**
+  - production_process_definition — process flow, stations, routing, approvals
+  - machine_connectivity_readiness — PLC brands, protocols, connectivity feasibility
+  - erp_integration_scope — ERP name, data ownership, transactions, ERP team involved
+  - ot_network_infrastructure — VLAN, firewall OT/IT segmentation, latency
+  - traceability_requirement — genealogy model, serialization vs batch
+  - timeline_realism — pilot, go-live, rollout milestones (flag ASAP/4-week answers)
+  - poc_expectations — measurable PoC success criteria
+
+Extract EVERYTHING you can from the dump. Use status="STATED" for verbatim facts,
+"INFERRED" for derived facts, and include a why_it_matters only for "MISSING" fields.
+The value for MISSING fields must be an empty string "".
+
+For STATED fields: include the verbatim source_quote from the dump.
+For INFERRED fields: set value to your inference and source_quote to your reasoning.
 
 ### Step 3 — Enrich from Linkup (if company detected)
 If company_name or company_website was provided, call `enrich_from_linkup` with the
