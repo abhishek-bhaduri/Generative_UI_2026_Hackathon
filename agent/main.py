@@ -21,7 +21,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
+_AGENT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _AGENT_DIR.parent
+load_dotenv(_REPO_ROOT / ".env")
+load_dotenv(_AGENT_DIR / ".env", override=True)
 
 # Patch ag-ui-langgraph's multimodal converter so PDF text shipped via
 # CopilotChat attachments survives the trip to the model (Gemini via the
