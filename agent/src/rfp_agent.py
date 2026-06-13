@@ -148,12 +148,15 @@ def enrich_from_linkup(
         query: Search query — typically the company name or website URL.
     """
     api_key = os.getenv("LINKUP_API_KEY", "")
-    if not api_key:
-        log.info("[rfp_agent] LINKUP_API_KEY not set — skipping enrichment")
-        return json.dumps({"ok": False, "reason": "LINKUP_API_KEY not configured"})
-
     tid = _thread_id(config)
     deal = get_deal(tid) or {}
+    if not api_key:
+        log.info("[rfp_agent] LINKUP_API_KEY not set — skipping enrichment")
+        deal["linkup_status"] = "skipped"
+        deal["linkup_error"] = "Company lookup unavailable; continuing from provided requirements."
+        set_deal(tid, deal)
+        return json.dumps({"ok": False, "reason": "LINKUP_API_KEY not configured"})
+
     if deal.get("linkup_query") == query and deal.get("linkup_context"):
         return json.dumps({
             "ok": True,
@@ -175,6 +178,8 @@ def enrich_from_linkup(
 
         deal["linkup_context"] = answer
         deal["linkup_query"] = query
+        deal["linkup_status"] = "enriched"
+        deal["linkup_error"] = ""
         set_deal(tid, deal)
 
         log.info("[rfp_agent] Linkup enrichment ok for query=%r", query)
@@ -182,6 +187,9 @@ def enrich_from_linkup(
 
     except Exception as exc:  # noqa: BLE001
         log.warning("[rfp_agent] Linkup enrichment failed: %s", exc)
+        deal["linkup_status"] = "unavailable"
+        deal["linkup_error"] = "Company lookup unavailable; continuing from provided requirements."
+        set_deal(tid, deal)
         return json.dumps({"ok": False, "reason": str(exc)})
 
 
@@ -247,6 +255,8 @@ def render_deal_context(
     company_name = deal.get("company_name", "")
     linkup_context = deal.get("linkup_context", "")
     linkup_query = deal.get("linkup_query", "")
+    linkup_status = deal.get("linkup_status", "")
+    linkup_error = deal.get("linkup_error", "")
     surface_created = deal.get("surface_created", False)
 
     blockers = get_blockers_for_archetype(archetype)
@@ -268,13 +278,22 @@ def render_deal_context(
         "linkup_enriched": bool(linkup_context),
         "linkup_query": linkup_query,
         "linkup_context": linkup_context,
+        "linkup_status": linkup_status,
+        "linkup_error": linkup_error,
         "readiness": readiness,
         "readiness_pct": f"{int(readiness * 100)}%",
         "provisional": PROVISIONAL,
         "fields": field_list,
     }
 
-    components = _build_components(archetype, company_name, readiness, field_list, linkup_context)
+    components = _build_components(
+        archetype,
+        company_name,
+        readiness,
+        field_list,
+        linkup_context,
+        linkup_error,
+    )
 
     ops: list = [
         a2ui.update_components(SURFACE_DEAL, components),
@@ -294,6 +313,7 @@ def _build_components(
     readiness: float,
     field_list: list[dict],
     linkup_context: str = "",
+    linkup_error: str = "",
 ) -> list[dict]:
     """Build the flat A2UI component list (no 'props' wrapper — flat keys per spec)."""
     stated = [f for f in field_list if f["status"] == "STATED"]
@@ -310,7 +330,7 @@ def _build_components(
 
     # Root
     section_ids = ["header-section", "progress-row"]
-    if linkup_context:
+    if linkup_context or linkup_error:
         section_ids.append("company-section")
     if stated:
         section_ids.append("stated-section")
@@ -334,15 +354,20 @@ def _build_components(
     comps.append({"id": "r-label", "component": "Text", "text": "Readiness", "size": "sm", "tone": "muted"})
     comps.append({"id": "r-badge", "component": "Badge", "label": f"{readiness_pct}%", "tone": r_tone})
 
-    if linkup_context:
-        preview = linkup_context.strip().replace("\n", " ")
+    if linkup_context or linkup_error:
+        preview = (linkup_context or linkup_error).strip().replace("\n", " ")
         if len(preview) > 520:
             preview = preview[:517].rstrip() + "..."
         comps.append({"id": "company-section", "component": "Section", "title": "Company research", "eyebrow": "LINKUP", "child": "company-card"})
-        comps.append({"id": "company-card", "component": "Card", "child": "company-stack", "tone": "info"})
+        comps.append({"id": "company-card", "component": "Card", "child": "company-stack", "tone": "info" if linkup_context else "default"})
         comps.append({"id": "company-stack", "component": "Stack", "children": ["company-badge", "company-text"], "gap": "xs"})
-        comps.append({"id": "company-badge", "component": "Badge", "label": "Background context", "tone": "info"})
-        comps.append({"id": "company-text", "component": "Text", "text": preview, "size": "sm", "tone": "default"})
+        comps.append({
+            "id": "company-badge",
+            "component": "Badge",
+            "label": "Background context" if linkup_context else "Lookup skipped",
+            "tone": "info" if linkup_context else "neutral",
+        })
+        comps.append({"id": "company-text", "component": "Text", "text": preview, "size": "sm", "tone": "default" if linkup_context else "muted"})
 
     def add_field_card(f: dict) -> None:
         fid = f["name"]

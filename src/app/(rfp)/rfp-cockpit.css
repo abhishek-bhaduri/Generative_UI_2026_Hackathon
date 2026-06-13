@@ -103,7 +103,7 @@
 }
 
 .rfp-chat-outer {
-  padding: 12px;
+  padding: 18px;
   background: var(--surface-soft);
 }
 
@@ -114,4 +114,26 @@
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+}
+
+/* CopilotChat owns its inner composer layout. Add RFP-scoped breathing room
+ * around both the transcript and the bottom input pill so pasted demos do not
+ * visually slam into the split-pane edge. */
+.rfp-cockpit-root .rfp-chat-inner [data-testid="copilot-chat"],
+.rfp-cockpit-root .rfp-chat-inner .copilotKitChat {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.rfp-cockpit-root .rfp-chat-inner [data-testid="copilot-input-overlay"] {
+  padding-left: 18px;
+  padding-right: 18px;
+  padding-bottom: 18px;
+}
+
+.rfp-cockpit-root .rfp-chat-inner [data-testid="copilot-chat-input"],
+.rfp-cockpit-root .rfp-chat-inner .copilotKitInput {
+  margin-left: 0;
+  margin-right: 0;
+  margin-bottom: 0;
 }
