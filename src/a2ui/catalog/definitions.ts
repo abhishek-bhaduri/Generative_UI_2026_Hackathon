@@ -291,9 +291,17 @@ export const definitions = {
 
   MultiFieldForm: {
     description:
-      "Small multi-field form for answering several missing RFP blockers at once. " +
-      "Dispatches a 'submit_fields' event with { fields: [{ fieldName, value, status }] }.",
+      "Review form for confirming/correcting inferred fields and answering several " +
+      "missing RFP blockers at once. Stages local changes and dispatches one " +
+      "'submit_fields' event with { fields: [{ fieldName, value, status }] }.",
     props: z.object({
+      inferredFields: z.array(
+        z.object({
+          fieldName: z.string(),
+          label: z.string(),
+          value: z.string(),
+        }),
+      ).optional(),
       fields: z.array(
         z.object({
           fieldName: z.string(),

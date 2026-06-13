@@ -287,6 +287,7 @@ def _build_components(
     stated = [f for f in field_list if f["status"] == "STATED"]
     inferred = [f for f in field_list if f["status"] == "INFERRED"]
     missing = [f for f in field_list if f["status"] == "MISSING"]
+    top_missing = missing[:3]
     readiness_pct = int(readiness * 100)
 
     title = f"{archetype} RFP Intake" if archetype != "UNKNOWN" else "RFP Intake"
@@ -303,6 +304,8 @@ def _build_components(
         section_ids.append("inferred-section")
     if missing:
         section_ids.append("missing-section")
+    if inferred or top_missing:
+        section_ids.append("review-section")
     comps.append({"id": "root", "component": "Stack", "children": section_ids, "gap": "md"})
 
     # Header section
@@ -317,7 +320,7 @@ def _build_components(
     comps.append({"id": "r-label", "component": "Text", "text": "Readiness", "size": "sm", "tone": "muted"})
     comps.append({"id": "r-badge", "component": "Badge", "label": f"{readiness_pct}%", "tone": r_tone})
 
-    def add_field_card(f: dict, mode: str = "read") -> None:
+    def add_field_card(f: dict) -> None:
         fid = f["name"]
         s_tone = {"STATED": "positive", "INFERRED": "warning", "MISSING": "danger"}.get(f["status"], "neutral")
         card_tone = "default" if f["status"] in ("STATED", "CONFIRMED") else "warning" if f["status"] == "INFERRED" else "default"
@@ -325,48 +328,11 @@ def _build_components(
         body_text = f["value"] if f["status"] in ("STATED", "INFERRED") and f.get("value") else f.get("why_it_matters", "Required — not yet captured.")
 
         inner_children = [f"badge-{fid}", f"text-{fid}"]
-        if mode == "confirm" and f["status"] == "INFERRED":
-            inner_children.extend([f"confirm-row-{fid}", f"input-{fid}"])
-        elif mode == "input" and f["status"] == "MISSING":
-            inner_children.append(f"input-{fid}")
 
         comps.append({"id": f"card-{fid}", "component": "Card", "child": f"inner-{fid}", "tone": card_tone})
         comps.append({"id": f"inner-{fid}", "component": "Stack", "children": inner_children, "gap": "xs"})
         comps.append({"id": f"badge-{fid}", "component": "Badge", "label": f["label"] + " · " + f["status"], "tone": s_tone})
         comps.append({"id": f"text-{fid}", "component": "Text", "text": body_text, "size": "sm", "tone": "muted" if f["status"] == "MISSING" else "default"})
-
-        if mode == "confirm" and f["status"] == "INFERRED":
-            comps.append({"id": f"confirm-row-{fid}", "component": "Row", "children": [f"confirm-{fid}"], "gap": "sm"})
-            comps.append({
-                "id": f"confirm-{fid}",
-                "component": "Button",
-                "label": "Confirm",
-                "variant": "secondary",
-                "action": {
-                    "event": {
-                        "name": "confirm_field",
-                        "context": {
-                            "fieldName": fid,
-                            "value": f.get("value", ""),
-                        },
-                    },
-                },
-            })
-            comps.append({
-                "id": f"input-{fid}",
-                "component": "TextInput",
-                "fieldName": fid,
-                "label": f["label"],
-                "placeholder": "If this is wrong, type the correct info…",
-            })
-        elif mode == "input" and f["status"] == "MISSING":
-            comps.append({
-                "id": f"input-{fid}",
-                "component": "TextInput",
-                "fieldName": fid,
-                "label": f["label"],
-                "placeholder": f"Your answer for: {f['label']}",
-            })
 
     # STATED
     if stated:
@@ -380,24 +346,35 @@ def _build_components(
         comps.append({"id": "inferred-section", "component": "Section", "title": f"Inferred ({len(inferred)})", "child": "inferred-stack"})
         comps.append({"id": "inferred-stack", "component": "Stack", "children": [f"card-{f['name']}" for f in inferred], "gap": "sm"})
         for f in inferred:
-            add_field_card(f, mode="confirm")
+            add_field_card(f)
 
     # MISSING — show top 3 priority gaps only; summarise the rest
     if missing:
-        top_missing = missing[:3]
         rest_count = len(missing) - len(top_missing)
         section_title = f"Top gaps to chase ({len(missing)} total)"
         comps.append({"id": "missing-section", "component": "Section", "title": section_title, "child": "missing-stack"})
         stack_children = [f"card-{f['name']}" for f in top_missing]
-        stack_children.append("missing-form")
         if rest_count:
             stack_children.append("missing-more")
         comps.append({"id": "missing-stack", "component": "Stack", "children": stack_children, "gap": "sm"})
         for f in top_missing:
             add_field_card(f)
+        if rest_count:
+            comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the questions above to unlock them.", "size": "sm", "tone": "muted"})
+
+    if inferred or top_missing:
+        comps.append({"id": "review-section", "component": "Section", "title": "Review or add information", "child": "review-form"})
         comps.append({
-            "id": "missing-form",
+            "id": "review-form",
             "component": "MultiFieldForm",
+            "inferredFields": [
+                {
+                    "fieldName": f["name"],
+                    "label": f["label"],
+                    "value": f.get("value", ""),
+                }
+                for f in inferred
+            ],
             "fields": [
                 {
                     "fieldName": f["name"],
@@ -406,10 +383,8 @@ def _build_components(
                 }
                 for f in top_missing
             ],
-            "submitLabel": "Save answers",
+            "submitLabel": "Update cockpit",
         })
-        if rest_count:
-            comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the questions above to unlock them.", "size": "sm", "tone": "muted"})
 
     return comps
 
@@ -482,16 +457,13 @@ Call `render_deal_context` — no arguments needed. Call ONCE per turn.
 ### Step 5 — Chase missing blockers in chat
 After rendering, ask about the top 2–3 MISSING hard blockers. Batch your questions.
 For each, explain WHY it matters using the deal-killer rationale. One clear ask per blocker.
-The canvas already shows TextInput boxes for the top 3 gaps — remind the user they can type directly in the canvas OR answer here in chat.
+The canvas already shows a review form where users can confirm/correct inferred fields
+and answer multiple gaps before updating the cockpit once.
 
 ### Handling canvas events (log_a2ui_event)
 When you receive a `log_a2ui_event` tool result:
-- "submit_field": extract context.fieldName + context.value, call `apply_canvas_updates`
-  with one field as status="STATED", then call `render_deal_context`.
 - "submit_fields": extract context.fields, call `apply_canvas_updates` with every
-  non-empty field as status="STATED", then call `render_deal_context`.
-- "confirm_field": extract context.fieldName + context.value, call `apply_canvas_updates`
-  with one field as status="CONFIRMED", then call `render_deal_context`.
+  non-empty field, then call `render_deal_context`.
 After any canvas update, acknowledge briefly and ask only for the next most important gap.
 
 ## Hard rules

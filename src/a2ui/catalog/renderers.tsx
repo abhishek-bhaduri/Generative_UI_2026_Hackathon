@@ -1112,40 +1112,116 @@ const MultiFieldForm = ({
   props,
   dispatch,
 }: RendererProps<{
+  inferredFields?: { fieldName: string; label: string; value: string }[];
   fields: { fieldName: string; label: string; placeholder?: string }[];
   submitLabel?: string;
 }>) => {
   const [values, setValues] = useState<Record<string, string>>({});
-  const filled = (props.fields ?? [])
+  const [staged, setStaged] = useState<Record<string, { value: string; status: "STATED" | "CONFIRMED" }>>({});
+  const inferredFields = props.inferredFields ?? [];
+  const missingFields = props.fields ?? [];
+
+  const filledMissing = missingFields
     .map((field) => ({
       fieldName: field.fieldName,
       value: (values[field.fieldName] ?? "").trim(),
       status: "STATED",
     }))
     .filter((field) => field.value);
+  const stagedUpdates = Object.entries(staged).map(([fieldName, update]) => ({
+    fieldName,
+    value: update.value,
+    status: update.status,
+  }));
+  const updates = [...stagedUpdates, ...filledMissing];
 
   const submit = () => {
-    if (!filled.length) return;
+    if (!updates.length) return;
     dispatch?.({
       event: {
         name: "submit_fields",
-        context: { fields: filled },
+        context: { fields: updates },
       },
     } as never);
     setValues({});
+    setStaged({});
   };
 
   return (
     <div className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 flex flex-col gap-3">
       <div className="flex flex-col gap-1">
         <span className="mono text-[11px] uppercase tracking-[0.12em] text-[var(--ink)] font-semibold">
-          Answer multiple gaps
+          Review and answer
         </span>
         <span className="text-[12.5px] text-[var(--ink-2)]">
-          Fill any fields you know, then save them together.
+          Confirm or correct inferred fields, answer any gaps you know, then update the cockpit once.
         </span>
       </div>
-      {(props.fields ?? []).map((field) => (
+
+      {inferredFields.map((field) => {
+        const current = staged[field.fieldName];
+        const isDone = Boolean(current);
+        return (
+          <div key={field.fieldName} className="rounded-[10px] border border-[var(--line)] bg-[var(--surface)] p-3 flex flex-col gap-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[12px] font-semibold text-[var(--ink)]">{field.label}</div>
+                <div className="text-[12.5px] text-[var(--ink-2)] leading-snug">{current?.value ?? field.value}</div>
+              </div>
+              {isDone && (
+                <span className="mono text-[10px] uppercase tracking-[0.1em] text-[#0a5d44] bg-[color-mix(in_oklab,var(--mint)_20%,transparent)] px-2 py-1 rounded-full">
+                  {current.status === "CONFIRMED" ? "Confirmed" : "Saved"}
+                </span>
+              )}
+            </div>
+            {!isDone && (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={values[field.fieldName] ?? ""}
+                  onChange={(e) =>
+                    setValues((state) => ({
+                      ...state,
+                      [field.fieldName]: e.target.value,
+                    }))
+                  }
+                  placeholder="If wrong, type the correction…"
+                  className="flex-1 px-3 py-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] text-[13px] text-[var(--ink)] focus:outline-none focus:border-[var(--brand-primary,var(--ink-2))] transition"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setStaged((state) => ({
+                      ...state,
+                      [field.fieldName]: { value: field.value, status: "CONFIRMED" },
+                    }))
+                  }
+                  className="px-3 py-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] mono text-[11px] font-medium transition hover:bg-[var(--surface-soft)]"
+                >
+                  Confirm
+                </button>
+                <button
+                  type="button"
+                  disabled={!(values[field.fieldName] ?? "").trim()}
+                  onClick={() => {
+                    const value = (values[field.fieldName] ?? "").trim();
+                    if (!value) return;
+                    setStaged((state) => ({
+                      ...state,
+                      [field.fieldName]: { value, status: "STATED" },
+                    }));
+                  }}
+                  className="px-3 py-2 rounded-[10px] bg-[var(--ink)] text-white mono text-[11px] font-medium disabled:opacity-40 transition"
+                >
+                  Save
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {missingFields.map((field) => (
         <label key={field.fieldName} className="flex flex-col gap-1.5">
           <span className="text-[12px] font-medium text-[var(--ink)]">
             {field.label}
@@ -1169,11 +1245,11 @@ const MultiFieldForm = ({
       ))}
       <button
         type="button"
-        disabled={!filled.length}
+        disabled={!updates.length}
         onClick={submit}
         className="self-start px-4 py-2 rounded-[10px] bg-[var(--ink)] text-white mono text-[11px] font-medium disabled:opacity-40 transition"
       >
-        {props.submitLabel ?? "Save answers"}
+        {props.submitLabel ?? "Update cockpit"}
       </button>
     </div>
   );
