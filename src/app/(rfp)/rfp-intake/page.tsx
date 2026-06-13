@@ -1,12 +1,27 @@
 "use client";
 
 import { CopilotChat } from "@copilotkit/react-core/v2";
+import { surfaceBus } from "@/a2ui/surface-bus";
 import { SurfaceCanvas, CanvasEmptyState } from "@/components/pdf-analyst/SurfaceCanvas";
 import { Split } from "@/components/pdf-analyst/Split";
 
 const AGENT_ID = "rfp_agent";
 
 export default function RFPIntakePage() {
+  const resetDemo = () => {
+    surfaceBus.reset(AGENT_ID);
+
+    for (const storage of [window.localStorage, window.sessionStorage]) {
+      for (const key of Object.keys(storage)) {
+        if (/copilot|ag-ui|a2ui|rfp/i.test(key)) {
+          storage.removeItem(key);
+        }
+      }
+    }
+
+    window.location.href = `/rfp-intake?demo=${Date.now()}`;
+  };
+
   return (
     <div className="h-screen flex flex-col bg-[var(--bg)]">
       {/* Nav */}
@@ -21,6 +36,9 @@ export default function RFPIntakePage() {
           RFP Intake Cockpit
         </span>
         <span className="rfp-nav-badge">RTLS · MES</span>
+        <button type="button" className="rfp-reset-button" onClick={resetDemo}>
+          Reset demo
+        </button>
       </nav>
 
       <div className="flex-1 min-h-0 flex">
@@ -28,16 +46,18 @@ export default function RFPIntakePage() {
           persistKey="rfp.split"
           initialLeftFraction={0.38}
           left={
-            <div className="h-full flex flex-col copilot-chat-wrapper">
-              <CopilotChat
-                agentId={AGENT_ID}
-                labels={{
-                  chatInputPlaceholder:
-                    "Paste your requirements here — describe the project, company, timeline, anything you have…",
-                  welcomeMessageText:
-                    "Paste a rough requirements dump and I'll infer the archetype, extract what I can, and chase the critical gaps you need to close the deal.",
-                }}
-              />
+            <div className="h-full flex flex-col copilot-chat-wrapper rfp-chat-outer">
+              <div className="rfp-chat-inner">
+                <CopilotChat
+                  agentId={AGENT_ID}
+                  labels={{
+                    chatInputPlaceholder:
+                      "Paste your requirements here — describe the project, company, timeline, anything you have…",
+                    welcomeMessageText:
+                      "Paste a rough requirements dump and I'll infer the archetype, extract what I can, and chase the critical gaps you need to close the deal.",
+                  }}
+                />
+              </div>
             </div>
           }
           right={
