@@ -60,6 +60,9 @@ class FieldUpdate(TypedDict):
     status: Literal["STATED", "CONFIRMED"]
 
 
+COMPANY_FIELD_NAME = "company_name"
+
+
 # ─── thread_id helper ─────────────────────────────────────────────────────────
 
 def _thread_id(config: RunnableConfig) -> str:
@@ -98,6 +101,9 @@ def extract_seed_fields(
     deal["archetype"] = archetype
     deal["company_name"] = company_name
     deal["company_website"] = company_website
+    if company_name:
+        deal["company_name_status"] = "STATED"
+        deal["company_name_source"] = company_name
     deal.setdefault("surface_created", False)
 
     existing_fields = deal.get("fields", {})
@@ -220,6 +226,17 @@ def apply_canvas_updates(
         if not name or not value:
             continue
 
+        if name == COMPANY_FIELD_NAME:
+            deal["company_name"] = value
+            deal["company_name_status"] = update.get("status", "STATED")
+            deal["company_name_source"] = value
+            deal["linkup_context"] = ""
+            deal["linkup_query"] = ""
+            deal["linkup_status"] = ""
+            deal["linkup_error"] = ""
+            updated.append(name)
+            continue
+
         blocker = ALL_BLOCKERS_BY_NAME.get(name, {})
         prior = existing_fields.get(name, {})
         status = update.get("status", "STATED")
@@ -276,6 +293,30 @@ def render_deal_context(
         }
         for b in blockers
     ]
+    if company_name:
+        field_list = [
+            {
+                "name": COMPANY_FIELD_NAME,
+                "label": "Company Name",
+                "value": company_name,
+                "status": deal.get("company_name_status", "STATED"),
+                "source_quote": deal.get("company_name_source", company_name),
+                "why_it_matters": "",
+            },
+            *field_list,
+        ]
+    else:
+        field_list = [
+            {
+                "name": COMPANY_FIELD_NAME,
+                "label": "Company Name",
+                "value": "",
+                "status": "MISSING",
+                "source_quote": "",
+                "why_it_matters": "Company context powers background research and keeps the intake tied to the right customer.",
+            },
+            *field_list,
+        ]
 
     payload = {
         "archetype": archetype,
@@ -321,6 +362,7 @@ def _build_components(
     linkup_error: str = "",
 ) -> list[dict]:
     """Build the flat A2UI component list (no 'props' wrapper — flat keys per spec)."""
+    confirmed = [f for f in field_list if f["status"] == "CONFIRMED"]
     stated = [f for f in field_list if f["status"] == "STATED"]
     inferred = [f for f in field_list if f["status"] == "INFERRED"]
     missing = [f for f in field_list if f["status"] == "MISSING"]
@@ -337,6 +379,8 @@ def _build_components(
     section_ids = ["header-section", "summary-card"]
     if linkup_context or linkup_error:
         section_ids.append("company-section")
+    if confirmed:
+        section_ids.append("confirmed-section")
     if stated:
         section_ids.append("stated-section")
     if inferred:
@@ -360,7 +404,7 @@ def _build_components(
     comps.append({"id": "summary-stack", "component": "Stack", "children": ["summary-meter", "summary-row"], "gap": "sm"})
     comps.append({"id": "summary-meter", "component": "ReadinessMeter", "pct": readiness_pct, "label": "Intake readiness", "tone": r_tone})
     comps.append({"id": "summary-row", "component": "Row", "children": ["captured-badge", "inferred-badge", "gap-badge"], "gap": "sm", "align": "center"})
-    comps.append({"id": "captured-badge", "component": "Badge", "label": f"{len(stated)} captured", "tone": "positive"})
+    comps.append({"id": "captured-badge", "component": "Badge", "label": f"{len(confirmed)} confirmed · {len(stated)} stated", "tone": "positive"})
     comps.append({"id": "inferred-badge", "component": "Badge", "label": f"{len(inferred)} inferred", "tone": "warning" if inferred else "neutral"})
     comps.append({"id": "gap-badge", "component": "Badge", "label": f"{len(missing)} open gaps", "tone": "danger" if missing else "positive"})
 
@@ -392,9 +436,16 @@ def _build_components(
             "whyItMatters": f.get("why_it_matters", "Required — not yet captured."),
         })
 
+    # CONFIRMED
+    if confirmed:
+        comps.append({"id": "confirmed-section", "component": "Section", "title": f"Confirmed ({len(confirmed)})", "child": "confirmed-stack"})
+        comps.append({"id": "confirmed-stack", "component": "Grid", "children": [f"card-{f['name']}" for f in confirmed], "columns": 2, "gap": "sm"})
+        for f in confirmed:
+            add_field_card(f)
+
     # STATED
     if stated:
-        comps.append({"id": "stated-section", "component": "Section", "title": f"Captured ({len(stated)})", "child": "stated-stack"})
+        comps.append({"id": "stated-section", "component": "Section", "title": f"Stated by customer ({len(stated)})", "child": "stated-stack"})
         comps.append({"id": "stated-stack", "component": "Grid", "children": [f"card-{f['name']}" for f in stated], "columns": 2, "gap": "sm"})
         for f in stated:
             add_field_card(f)
@@ -409,7 +460,7 @@ def _build_components(
     # MISSING — show top 3 priority gaps only; summarise the rest
     if missing:
         rest_count = len(missing) - len(top_missing)
-        section_title = f"Top gaps to chase ({len(missing)} total)"
+        section_title = f"Needs to chase ({len(missing)} total)"
         comps.append({"id": "missing-section", "component": "Section", "title": section_title, "child": "missing-stack"})
         stack_children = [f"card-{f['name']}" for f in top_missing]
         if rest_count:
@@ -418,7 +469,7 @@ def _build_components(
         for f in top_missing:
             add_field_card(f)
         if rest_count:
-            comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the questions above to unlock them.", "size": "sm", "tone": "muted"})
+            comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the fields above to unlock them.", "size": "sm", "tone": "muted"})
 
     if inferred or top_missing:
         comps.append({"id": "review-section", "component": "Section", "title": "Review or add information", "child": "review-form"})
@@ -518,6 +569,8 @@ After rendering, ask about the top 2–3 MISSING hard blockers. Batch your quest
 For each, explain WHY it matters using the deal-killer rationale. One clear ask per blocker.
 The canvas already shows a review form where users can confirm/correct inferred fields
 and answer multiple gaps before updating the cockpit once.
+If company_name is missing, ask for the company name first because it enables company
+research and grounds the intake in the right customer context.
 
 ### Handling canvas events (log_a2ui_event)
 When you receive a `log_a2ui_event` tool result:
@@ -581,7 +634,7 @@ def _demo_company_name(text: str) -> str:
             name = re.split(r"[,.;\n]", match.group(1).strip())[0].strip()
             if name and len(name.split()) <= 6:
                 return name
-    return "Acme Precision Manufacturing"
+    return ""
 
 
 def _demo_archetype(text: str) -> Literal["RTLS", "MES", "UNKNOWN"]:
@@ -746,17 +799,34 @@ class DemoRFPModel(BaseChatModel):
                     "id": f"call_{uuid.uuid4().hex[:12]}",
                 }],
             )
+        elif "render_deal_context" in tool_names:
+            message = AIMessage(
+                content=(
+                    "I built the intake cockpit on the right. Confirm or correct inferred "
+                    "fields there, answer any gaps you know, then update the cockpit once."
+                )
+            )
         elif "enrich_from_linkup" not in tool_names:
             user_text = _latest_user_text(messages)
             query = _demo_company_name(user_text)
-            message = AIMessage(
-                content="",
-                tool_calls=[{
-                    "name": "enrich_from_linkup",
-                    "args": {"query": query},
-                    "id": f"call_{uuid.uuid4().hex[:12]}",
-                }],
-            )
+            if query:
+                message = AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "enrich_from_linkup",
+                        "args": {"query": query},
+                        "id": f"call_{uuid.uuid4().hex[:12]}",
+                    }],
+                )
+            else:
+                message = AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "render_deal_context",
+                        "args": {},
+                        "id": f"call_{uuid.uuid4().hex[:12]}",
+                    }],
+                )
         elif "render_deal_context" not in tool_names:
             message = AIMessage(
                 content="",
