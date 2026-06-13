@@ -75,7 +75,7 @@ component must have `id: "root"`.
     Completeness bar. Climbs as hard blockers are filled. Use at the top of the DealContextCard surface.
 - **TextInput** { fieldName: string, label: string, placeholder?: string }
     Inline text input with Save button. Dispatches submit_field event {fieldName, value} on save. Place inside MISSING field cards so the rep can answer directly in the canvas.
-- **MultiFieldForm** { inferredFields?: [{ fieldName, label, value }], fields: [{ fieldName, label, placeholder? }], submitLabel?: string }
+- **MultiFieldForm** { title?, helpText?, inferredFields?: [{ fieldName, label, value }], fields: [{ fieldName, label, placeholder? }], submitLabel?: string }
     Staged review form. Lets users confirm/correct inferred fields locally and answer multiple missing fields locally, then dispatches one submit_fields event for all changes.
 
 ### Rules

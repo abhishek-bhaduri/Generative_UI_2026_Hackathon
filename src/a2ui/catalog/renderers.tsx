@@ -1112,6 +1112,8 @@ const MultiFieldForm = ({
   props,
   dispatch,
 }: RendererProps<{
+  title?: string;
+  helpText?: string;
   inferredFields?: { fieldName: string; label: string; value: string }[];
   fields: { fieldName: string; label: string; placeholder?: string }[];
   submitLabel?: string;
@@ -1151,10 +1153,10 @@ const MultiFieldForm = ({
     <div className="rounded-[var(--radius)] border border-[color-mix(in_oklab,var(--brand-primary,#3b52cc)_22%,var(--line))] bg-[color-mix(in_oklab,var(--brand-primary,#3b52cc)_4%,var(--surface))] p-4 flex flex-col gap-3 shadow-sm">
       <div className="flex flex-col gap-1">
         <span className="mono text-[11px] uppercase tracking-[0.12em] text-[var(--ink)] font-semibold">
-          Review and answer
+          {props.title ?? "Review and answer"}
         </span>
         <span className="text-[12.5px] text-[var(--ink-2)]">
-          Confirm or correct inferred fields, answer any gaps you know, then update the cockpit once.
+          {props.helpText ?? "Confirm or correct inferred fields, answer any gaps you know, then update the cockpit once."}
         </span>
       </div>
 

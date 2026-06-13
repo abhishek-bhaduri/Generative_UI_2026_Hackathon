@@ -295,6 +295,8 @@ export const definitions = {
       "missing RFP blockers at once. Stages local changes and dispatches one " +
       "'submit_fields' event with { fields: [{ fieldName, value, status }] }.",
     props: z.object({
+      title: z.string().optional(),
+      helpText: z.string().optional(),
       inferredFields: z.array(
         z.object({
           fieldName: z.string(),

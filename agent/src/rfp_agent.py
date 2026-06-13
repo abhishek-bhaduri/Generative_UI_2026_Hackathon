@@ -364,6 +364,7 @@ def _build_components(
     """Build the flat A2UI component list (no 'props' wrapper — flat keys per spec)."""
     confirmed = [f for f in field_list if f["status"] == "CONFIRMED"]
     stated = [f for f in field_list if f["status"] == "STATED"]
+    confirmed_info = confirmed + stated
     inferred = [f for f in field_list if f["status"] == "INFERRED"]
     missing = [f for f in field_list if f["status"] == "MISSING"]
     top_missing = missing[:3]
@@ -379,16 +380,12 @@ def _build_components(
     section_ids = ["header-section", "summary-card"]
     if linkup_context or linkup_error:
         section_ids.append("company-section")
-    if confirmed:
+    if confirmed_info:
         section_ids.append("confirmed-section")
-    if stated:
-        section_ids.append("stated-section")
     if inferred:
         section_ids.append("inferred-section")
     if missing:
         section_ids.append("missing-section")
-    if inferred or top_missing:
-        section_ids.append("review-section")
     comps.append({"id": "root", "component": "Stack", "children": section_ids, "gap": "lg"})
 
     # Header section
@@ -404,7 +401,7 @@ def _build_components(
     comps.append({"id": "summary-stack", "component": "Stack", "children": ["summary-meter", "summary-row"], "gap": "sm"})
     comps.append({"id": "summary-meter", "component": "ReadinessMeter", "pct": readiness_pct, "label": "Intake readiness", "tone": r_tone})
     comps.append({"id": "summary-row", "component": "Row", "children": ["captured-badge", "inferred-badge", "gap-badge"], "gap": "sm", "align": "center"})
-    comps.append({"id": "captured-badge", "component": "Badge", "label": f"{len(confirmed)} confirmed · {len(stated)} stated", "tone": "positive"})
+    comps.append({"id": "captured-badge", "component": "Badge", "label": f"{len(confirmed_info)} confirmed/stated", "tone": "positive"})
     comps.append({"id": "inferred-badge", "component": "Badge", "label": f"{len(inferred)} inferred", "tone": "warning" if inferred else "neutral"})
     comps.append({"id": "gap-badge", "component": "Badge", "label": f"{len(missing)} open gaps", "tone": "danger" if missing else "positive"})
 
@@ -436,46 +433,25 @@ def _build_components(
             "whyItMatters": f.get("why_it_matters", "Required — not yet captured."),
         })
 
-    # CONFIRMED
-    if confirmed:
-        comps.append({"id": "confirmed-section", "component": "Section", "title": f"Confirmed ({len(confirmed)})", "child": "confirmed-stack"})
-        comps.append({"id": "confirmed-stack", "component": "Grid", "children": [f"card-{f['name']}" for f in confirmed], "columns": 2, "gap": "sm"})
-        for f in confirmed:
+    # CONFIRMED / STATED
+    if confirmed_info:
+        comps.append({"id": "confirmed-section", "component": "Section", "title": f"Confirmed Information ({len(confirmed_info)})", "child": "confirmed-stack"})
+        comps.append({"id": "confirmed-stack", "component": "Grid", "children": [f"card-{f['name']}" for f in confirmed_info], "columns": 2, "gap": "sm"})
+        for f in confirmed_info:
             add_field_card(f)
 
-    # STATED
-    if stated:
-        comps.append({"id": "stated-section", "component": "Section", "title": f"Stated by customer ({len(stated)})", "child": "stated-stack"})
-        comps.append({"id": "stated-stack", "component": "Grid", "children": [f"card-{f['name']}" for f in stated], "columns": 2, "gap": "sm"})
-        for f in stated:
-            add_field_card(f)
-
-    # INFERRED
+    # INFERRED — includes inline confirm/correct controls
     if inferred:
-        comps.append({"id": "inferred-section", "component": "Section", "title": f"Inferred ({len(inferred)})", "child": "inferred-stack"})
-        comps.append({"id": "inferred-stack", "component": "Grid", "children": [f"card-{f['name']}" for f in inferred], "columns": 2, "gap": "sm"})
+        comps.append({"id": "inferred-section", "component": "Section", "title": f"Inferred Information ({len(inferred)})", "child": "inferred-stack"})
+        comps.append({"id": "inferred-stack", "component": "Stack", "children": ["inferred-grid", "inferred-review-form"], "gap": "sm"})
+        comps.append({"id": "inferred-grid", "component": "Grid", "children": [f"card-{f['name']}" for f in inferred], "columns": 2, "gap": "sm"})
         for f in inferred:
             add_field_card(f)
-
-    # MISSING — show top 3 priority gaps only; summarise the rest
-    if missing:
-        rest_count = len(missing) - len(top_missing)
-        section_title = f"Needs to chase ({len(missing)} total)"
-        comps.append({"id": "missing-section", "component": "Section", "title": section_title, "child": "missing-stack"})
-        stack_children = [f"card-{f['name']}" for f in top_missing]
-        if rest_count:
-            stack_children.append("missing-more")
-        comps.append({"id": "missing-stack", "component": "Grid", "children": stack_children, "columns": 2, "gap": "sm"})
-        for f in top_missing:
-            add_field_card(f)
-        if rest_count:
-            comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the fields above to unlock them.", "size": "sm", "tone": "muted"})
-
-    if inferred or top_missing:
-        comps.append({"id": "review-section", "component": "Section", "title": "Review or add information", "child": "review-form"})
         comps.append({
-            "id": "review-form",
+            "id": "inferred-review-form",
             "component": "MultiFieldForm",
+            "title": "Confirm inferred information",
+            "helpText": "Confirm each inferred item or type a correction, then update the cockpit once.",
             "inferredFields": [
                 {
                     "fieldName": f["name"],
@@ -484,6 +460,31 @@ def _build_components(
                 }
                 for f in inferred
             ],
+            "fields": [],
+            "submitLabel": "Apply confirmations",
+        })
+
+    # MISSING — show top 3 priority gaps only; summarise the rest
+    if missing:
+        rest_count = len(missing) - len(top_missing)
+        section_title = f"Needs Information ({len(missing)} total)"
+        comps.append({"id": "missing-section", "component": "Section", "title": section_title, "child": "missing-stack"})
+        stack_children = [f"card-{f['name']}" for f in top_missing]
+        if rest_count:
+            stack_children.append("missing-more")
+        stack_children.append("missing-form")
+        comps.append({"id": "missing-stack", "component": "Stack", "children": ["missing-grid", "missing-form"], "gap": "sm"})
+        comps.append({"id": "missing-grid", "component": "Grid", "children": stack_children[:-1], "columns": 2, "gap": "sm"})
+        for f in top_missing:
+            add_field_card(f)
+        if rest_count:
+            comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the fields above to unlock them.", "size": "sm", "tone": "muted"})
+        comps.append({
+            "id": "missing-form",
+            "component": "MultiFieldForm",
+            "title": "Add missing information",
+            "helpText": "Fill as many open fields as you can, then update the cockpit once.",
+            "inferredFields": [],
             "fields": [
                 {
                     "fieldName": f["name"],
@@ -492,7 +493,7 @@ def _build_components(
                 }
                 for f in top_missing
             ],
-            "submitLabel": "Update cockpit",
+            "submitLabel": "Save missing info",
         })
 
     return comps
