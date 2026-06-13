@@ -1148,7 +1148,7 @@ const MultiFieldForm = ({
   };
 
   return (
-    <div className="rounded-[var(--radius)] border border-[var(--line)] bg-[var(--surface-soft)] p-4 flex flex-col gap-3">
+    <div className="rounded-[var(--radius)] border border-[color-mix(in_oklab,var(--brand-primary,#3b52cc)_22%,var(--line))] bg-[color-mix(in_oklab,var(--brand-primary,#3b52cc)_4%,var(--surface))] p-4 flex flex-col gap-3 shadow-sm">
       <div className="flex flex-col gap-1">
         <span className="mono text-[11px] uppercase tracking-[0.12em] text-[var(--ink)] font-semibold">
           Review and answer
@@ -1175,7 +1175,7 @@ const MultiFieldForm = ({
               )}
             </div>
             {!isDone && (
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
                   value={values[field.fieldName] ?? ""}
@@ -1186,35 +1186,37 @@ const MultiFieldForm = ({
                     }))
                   }
                   placeholder="If wrong, type the correction…"
-                  className="flex-1 px-3 py-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] text-[13px] text-[var(--ink)] focus:outline-none focus:border-[var(--brand-primary,var(--ink-2))] transition"
+                  className="min-w-0 flex-1 px-3 py-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] text-[13px] text-[var(--ink)] focus:outline-none focus:border-[var(--brand-primary,var(--ink-2))] transition"
                 />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setStaged((state) => ({
-                      ...state,
-                      [field.fieldName]: { value: field.value, status: "CONFIRMED" },
-                    }))
-                  }
-                  className="px-3 py-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] mono text-[11px] font-medium transition hover:bg-[var(--surface-soft)]"
-                >
-                  Confirm
-                </button>
-                <button
-                  type="button"
-                  disabled={!(values[field.fieldName] ?? "").trim()}
-                  onClick={() => {
-                    const value = (values[field.fieldName] ?? "").trim();
-                    if (!value) return;
-                    setStaged((state) => ({
-                      ...state,
-                      [field.fieldName]: { value, status: "STATED" },
-                    }));
-                  }}
-                  className="px-3 py-2 rounded-[10px] bg-[var(--ink)] text-white mono text-[11px] font-medium disabled:opacity-40 transition"
-                >
-                  Save
-                </button>
+                <div className="flex gap-2 sm:flex-none">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setStaged((state) => ({
+                        ...state,
+                        [field.fieldName]: { value: field.value, status: "CONFIRMED" },
+                      }))
+                    }
+                    className="flex-1 sm:flex-none px-3 py-2 rounded-[10px] border border-[color-mix(in_oklab,var(--mint)_60%,var(--line))] bg-[color-mix(in_oklab,var(--mint)_12%,var(--surface))] text-[#0a5d44] mono text-[11px] font-semibold transition hover:bg-[color-mix(in_oklab,var(--mint)_18%,var(--surface))]"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!(values[field.fieldName] ?? "").trim()}
+                    onClick={() => {
+                      const value = (values[field.fieldName] ?? "").trim();
+                      if (!value) return;
+                      setStaged((state) => ({
+                        ...state,
+                        [field.fieldName]: { value, status: "STATED" },
+                      }));
+                    }}
+                    className="flex-1 sm:flex-none px-3 py-2 rounded-[10px] bg-[var(--ink)] text-white mono text-[11px] font-semibold disabled:opacity-40 transition"
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1243,14 +1245,19 @@ const MultiFieldForm = ({
           />
         </label>
       ))}
-      <button
-        type="button"
-        disabled={!updates.length}
-        onClick={submit}
-        className="self-start px-4 py-2 rounded-[10px] bg-[var(--ink)] text-white mono text-[11px] font-medium disabled:opacity-40 transition"
-      >
-        {props.submitLabel ?? "Update cockpit"}
-      </button>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
+        <button
+          type="button"
+          disabled={!updates.length}
+          onClick={submit}
+          className="self-start px-4 py-2 rounded-[10px] bg-[var(--brand-primary,var(--ink))] text-white mono text-[11px] font-semibold disabled:opacity-40 transition hover:bg-[var(--brand-primary-hover,var(--ink))]"
+        >
+          {props.submitLabel ?? "Update cockpit"}
+        </button>
+        <span className="text-[12px] text-[var(--ink-2)]">
+          {updates.length ? `${updates.length} staged update${updates.length === 1 ? "" : "s"}` : "No updates staged yet"}
+        </span>
+      </div>
     </div>
   );
 };
@@ -1272,14 +1279,16 @@ const DealContextCard = ({
   return (
     <div
       className={clsx(
-        "rounded-lg border px-3 py-2.5 flex flex-col gap-1 text-[13px]",
+        "min-h-[104px] rounded-[10px] border px-3 py-2.5 flex flex-col gap-2 text-[13px] shadow-sm",
         isMissing
           ? "border-[var(--danger,#d54b53)] bg-[color-mix(in_oklab,var(--danger,#d54b53)_6%,var(--surface))]"
-          : "border-[var(--line)] bg-[var(--surface)]",
+          : status === "INFERRED"
+            ? "border-[color-mix(in_oklab,var(--orange,#ffac4d)_45%,var(--line))] bg-[color-mix(in_oklab,var(--orange,#ffac4d)_6%,var(--surface))]"
+            : "border-[var(--line)] bg-[var(--surface)]",
       )}
       title={sourceQuote ? `Source: "${sourceQuote}"` : undefined}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <span
           className={clsx(
             "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold mono uppercase tracking-wider",
@@ -1291,14 +1300,14 @@ const DealContextCard = ({
         >
           {status}
         </span>
-        <span className="font-medium text-[var(--ink)] truncate">{label}</span>
+        <span className="font-semibold text-[var(--ink)] leading-tight">{label}</span>
       </div>
       {isMissing ? (
-        <span className="text-[var(--ink-2)] leading-snug line-clamp-2">
+        <span className="text-[var(--ink-2)] leading-snug line-clamp-3">
           {whyItMatters || "Required for scoping."}
         </span>
       ) : (
-        <span className="text-[var(--ink)] leading-snug line-clamp-3">{value}</span>
+        <span className="text-[var(--ink)] leading-snug line-clamp-4">{value}</span>
       )}
     </div>
   );

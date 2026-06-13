@@ -329,7 +329,7 @@ def _build_components(
     comps: list[dict] = []
 
     # Root
-    section_ids = ["header-section", "progress-row"]
+    section_ids = ["header-section", "summary-card"]
     if linkup_context or linkup_error:
         section_ids.append("company-section")
     if stated:
@@ -340,19 +340,24 @@ def _build_components(
         section_ids.append("missing-section")
     if inferred or top_missing:
         section_ids.append("review-section")
-    comps.append({"id": "root", "component": "Stack", "children": section_ids, "gap": "md"})
+    comps.append({"id": "root", "component": "Stack", "children": section_ids, "gap": "lg"})
 
     # Header section
     arch_tone = {"RTLS": "info", "MES": "positive", "UNKNOWN": "warning"}.get(archetype, "neutral")
     comps.append({"id": "header-section", "component": "Section", "title": title, "eyebrow": f"ARCHETYPE · {archetype}", "child": "header-row"})
-    comps.append({"id": "header-row", "component": "Row", "children": ["arch-badge"], "gap": "sm"})
+    comps.append({"id": "header-row", "component": "Row", "children": ["arch-badge", "rubric-badge"], "gap": "sm"})
     comps.append({"id": "arch-badge", "component": "Badge", "label": archetype, "tone": arch_tone})
+    comps.append({"id": "rubric-badge", "component": "Badge", "label": "PROVISIONAL RUBRIC" if PROVISIONAL else "RUBRIC LOCKED", "tone": "warning" if PROVISIONAL else "positive"})
 
-    # Readiness row
+    # Readiness summary
     r_tone = "danger" if readiness_pct < 50 else "warning" if readiness_pct < 85 else "positive"
-    comps.append({"id": "progress-row", "component": "Row", "children": ["r-label", "r-badge"], "gap": "sm", "align": "center"})
-    comps.append({"id": "r-label", "component": "Text", "text": "Readiness", "size": "sm", "tone": "muted"})
-    comps.append({"id": "r-badge", "component": "Badge", "label": f"{readiness_pct}%", "tone": r_tone})
+    comps.append({"id": "summary-card", "component": "Card", "child": "summary-stack", "tone": "lilac"})
+    comps.append({"id": "summary-stack", "component": "Stack", "children": ["summary-meter", "summary-row"], "gap": "sm"})
+    comps.append({"id": "summary-meter", "component": "ReadinessMeter", "pct": readiness_pct, "label": "Intake readiness", "tone": r_tone})
+    comps.append({"id": "summary-row", "component": "Row", "children": ["captured-badge", "inferred-badge", "gap-badge"], "gap": "sm", "align": "center"})
+    comps.append({"id": "captured-badge", "component": "Badge", "label": f"{len(stated)} captured", "tone": "positive"})
+    comps.append({"id": "inferred-badge", "component": "Badge", "label": f"{len(inferred)} inferred", "tone": "warning" if inferred else "neutral"})
+    comps.append({"id": "gap-badge", "component": "Badge", "label": f"{len(missing)} open gaps", "tone": "danger" if missing else "positive"})
 
     if linkup_context or linkup_error:
         preview = (linkup_context or linkup_error).strip().replace("\n", " ")
@@ -371,29 +376,28 @@ def _build_components(
 
     def add_field_card(f: dict) -> None:
         fid = f["name"]
-        s_tone = {"STATED": "positive", "INFERRED": "warning", "MISSING": "danger"}.get(f["status"], "neutral")
-        card_tone = "default" if f["status"] in ("STATED", "CONFIRMED") else "warning" if f["status"] == "INFERRED" else "default"
-
-        body_text = f["value"] if f["status"] in ("STATED", "INFERRED") and f.get("value") else f.get("why_it_matters", "Required — not yet captured.")
-
-        inner_children = [f"badge-{fid}", f"text-{fid}"]
-
-        comps.append({"id": f"card-{fid}", "component": "Card", "child": f"inner-{fid}", "tone": card_tone})
-        comps.append({"id": f"inner-{fid}", "component": "Stack", "children": inner_children, "gap": "xs"})
-        comps.append({"id": f"badge-{fid}", "component": "Badge", "label": f["label"] + " · " + f["status"], "tone": s_tone})
-        comps.append({"id": f"text-{fid}", "component": "Text", "text": body_text, "size": "sm", "tone": "muted" if f["status"] == "MISSING" else "default"})
+        comps.append({
+            "id": f"card-{fid}",
+            "component": "DealContextCard",
+            "fieldName": fid,
+            "label": f["label"],
+            "value": f.get("value", ""),
+            "status": f["status"],
+            "sourceQuote": f.get("source_quote", ""),
+            "whyItMatters": f.get("why_it_matters", "Required — not yet captured."),
+        })
 
     # STATED
     if stated:
         comps.append({"id": "stated-section", "component": "Section", "title": f"Captured ({len(stated)})", "child": "stated-stack"})
-        comps.append({"id": "stated-stack", "component": "Stack", "children": [f"card-{f['name']}" for f in stated], "gap": "sm"})
+        comps.append({"id": "stated-stack", "component": "Grid", "children": [f"card-{f['name']}" for f in stated], "columns": 2, "gap": "sm"})
         for f in stated:
             add_field_card(f)
 
     # INFERRED
     if inferred:
         comps.append({"id": "inferred-section", "component": "Section", "title": f"Inferred ({len(inferred)})", "child": "inferred-stack"})
-        comps.append({"id": "inferred-stack", "component": "Stack", "children": [f"card-{f['name']}" for f in inferred], "gap": "sm"})
+        comps.append({"id": "inferred-stack", "component": "Grid", "children": [f"card-{f['name']}" for f in inferred], "columns": 2, "gap": "sm"})
         for f in inferred:
             add_field_card(f)
 
@@ -405,7 +409,7 @@ def _build_components(
         stack_children = [f"card-{f['name']}" for f in top_missing]
         if rest_count:
             stack_children.append("missing-more")
-        comps.append({"id": "missing-stack", "component": "Stack", "children": stack_children, "gap": "sm"})
+        comps.append({"id": "missing-stack", "component": "Grid", "children": stack_children, "columns": 2, "gap": "sm"})
         for f in top_missing:
             add_field_card(f)
         if rest_count:
