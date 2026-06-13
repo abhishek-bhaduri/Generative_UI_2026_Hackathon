@@ -1,50 +1,101 @@
-"""DealStore — in-memory deal object with a Redis-ready interface.
+"""DealStore — deal object storage with automatic Redis/in-memory selection.
 
-The deal object is the single source of truth for an RFP intake session.
-UI components and agent nodes read/write through this store.
+If REDIS_URL is set, deals are stored in Redis (survives server restarts).
+If not, falls back to an in-memory dict (single-session demo mode).
 
-TODO (Redis wiring — on critical path):
-  Replace the in-memory _store dict with redis-py calls:
-    import redis
-    _redis = redis.Redis(host=os.getenv("REDIS_URL", "localhost"), port=6379, db=0)
-    Key format:  deal:{deal_id}
-    Serialise:   json.dumps / json.loads
-  The public API (get/set/update/delete) stays identical — only the backend changes.
+Key format: deal:{deal_id}  (JSON-serialised DealObject)
+Public API is identical either way — callers don't need to know the backend.
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import threading
 from typing import Any
 
+log = logging.getLogger(__name__)
+
+# ─── Backend selection ────────────────────────────────────────────────────────
+
+_redis_client: Any = None
 _store: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
 
 
+def _get_redis() -> Any:
+    """Return a connected redis.Redis client, or None if Redis is unavailable."""
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+
+    redis_url = os.getenv("REDIS_URL", "")
+    if not redis_url:
+        return None
+
+    try:
+        import redis as redis_lib
+        client = redis_lib.from_url(redis_url, decode_responses=True)
+        client.ping()
+        _redis_client = client
+        log.info("[deal_store] Redis connected at %s", redis_url.split("@")[-1])
+        return _redis_client
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[deal_store] Redis unavailable (%s) — falling back to in-memory", exc)
+        return None
+
+
+def _key(deal_id: str) -> str:
+    return f"deal:{deal_id}"
+
+
+# ─── Public API ───────────────────────────────────────────────────────────────
+
 def get_deal(deal_id: str) -> dict[str, Any] | None:
+    r = _get_redis()
+    if r is not None:
+        raw = r.get(_key(deal_id))
+        return json.loads(raw) if raw else None
     with _lock:
         val = _store.get(deal_id)
         return dict(val) if val is not None else None
 
 
 def set_deal(deal_id: str, deal: dict[str, Any]) -> None:
+    r = _get_redis()
+    if r is not None:
+        r.set(_key(deal_id), json.dumps(deal), ex=86400)  # 24h TTL
+        return
     with _lock:
         _store[deal_id] = dict(deal)
 
 
 def update_deal(deal_id: str, patch: dict[str, Any]) -> dict[str, Any]:
     """Merge patch into existing deal and return the updated deal."""
-    with _lock:
-        deal = dict(_store.get(deal_id, {}))
-        deal.update(patch)
-        _store[deal_id] = deal
-        return dict(deal)
+    deal = get_deal(deal_id) or {}
+    deal.update(patch)
+    set_deal(deal_id, deal)
+    return deal
 
 
 def delete_deal(deal_id: str) -> None:
+    r = _get_redis()
+    if r is not None:
+        r.delete(_key(deal_id))
+        return
     with _lock:
         _store.pop(deal_id, None)
 
 
 def all_deals() -> dict[str, dict[str, Any]]:
+    r = _get_redis()
+    if r is not None:
+        keys = r.keys("deal:*")
+        result = {}
+        for k in keys:
+            raw = r.get(k)
+            if raw:
+                result[k.removeprefix("deal:")] = json.loads(raw)
+        return result
     with _lock:
         return {k: dict(v) for k, v in _store.items()}
