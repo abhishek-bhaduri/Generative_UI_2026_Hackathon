@@ -1,5 +1,9 @@
 {
   "model_profile": "quality",
+  "model_overrides": {
+    "planning": "opus",
+    "execution": "sonnet"
+  },
   "commit_docs": true,
   "parallelization": true,
   "search_gitignored": false,
