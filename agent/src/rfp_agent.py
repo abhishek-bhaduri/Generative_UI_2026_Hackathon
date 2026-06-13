@@ -11,17 +11,19 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Literal, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 import httpx
 from copilotkit import CopilotKitMiddleware, a2ui
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import InjectedToolArg
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
 
 from src.catalog import CATALOG_ID, CATALOG_PROMPT
-from src.deal_store import get_deal, set_deal, update_deal
+from src.deal_store import get_deal, set_deal
 from src.rfp_hard_blockers import (
     PROVISIONAL,
     RTLS_SIGNALS,
@@ -34,6 +36,7 @@ log = logging.getLogger(__name__)
 
 SURFACE_DEAL = "rfp-deal"
 
+
 # ─── Typed parameter classes (Gemini typed-array fix — see fixed_agent.py:37) ─
 
 class DealField(TypedDict):
@@ -45,22 +48,28 @@ class DealField(TypedDict):
     why_it_matters: str
 
 
+# ─── thread_id helper ─────────────────────────────────────────────────────────
+
+def _thread_id(config: RunnableConfig) -> str:
+    """Extract LangGraph thread_id from injected RunnableConfig."""
+    return config.get("configurable", {}).get("thread_id", "default")
+
+
 # ─── Tools ────────────────────────────────────────────────────────────────────
 
 @tool
 def extract_seed_fields(
-    thread_id: str,
     archetype: Literal["RTLS", "MES", "UNKNOWN"],
     company_name: str,
     company_website: str,
     fields: list[DealField],
+    config: Annotated[RunnableConfig, InjectedToolArg],
 ) -> str:
     """Extract and store seed fields from the customer's requirements dump.
 
     Call this as your FIRST action on every new requirements input.
 
     Args:
-        thread_id: The current conversation thread ID (from system context).
         archetype: Inferred archetype — "RTLS", "MES", or "UNKNOWN" if ambiguous.
         company_name: Company name if mentioned, else empty string.
         company_website: Website/URL if mentioned, else empty string.
@@ -72,11 +81,12 @@ def extract_seed_fields(
             - source_quote: Verbatim quote from dump for STATED fields; empty for others
             - why_it_matters: One-sentence deal-killer rationale for MISSING fields
     """
-    deal = get_deal(thread_id) or {}
+    tid = _thread_id(config)
+    deal = get_deal(tid) or {}
     deal["archetype"] = archetype
     deal["company_name"] = company_name
     deal["company_website"] = company_website
-    deal["surface_created"] = deal.get("surface_created", False)
+    deal.setdefault("surface_created", False)
 
     existing_fields = deal.get("fields", {})
     for f in fields:
@@ -87,7 +97,6 @@ def extract_seed_fields(
             "source_quote": f.get("source_quote", ""),
             "why_it_matters": f.get("why_it_matters", ""),
         }
-    deal["fields"] = existing_fields
 
     blockers = get_blockers_for_archetype(archetype)
     for b in blockers:
@@ -100,8 +109,9 @@ def extract_seed_fields(
                 "why_it_matters": b["why_it_matters"],
             }
 
+    deal["fields"] = existing_fields
     deal["readiness"] = compute_readiness(existing_fields, archetype)
-    set_deal(thread_id, deal)
+    set_deal(tid, deal)
 
     missing = [
         b for b in blockers
@@ -119,17 +129,15 @@ def extract_seed_fields(
 
 @tool
 def enrich_from_linkup(
-    thread_id: str,
     query: str,
+    config: Annotated[RunnableConfig, InjectedToolArg],
 ) -> str:
     """Call Linkup to research the company and enrich deal fields.
 
     Call this after extract_seed_fields when company_name or company_website
-    was detected. Returns enrichment context or empty string on failure.
-    Gracefully degrades if LINKUP_API_KEY is missing or the API errors.
+    was detected. Gracefully degrades if LINKUP_API_KEY is missing or errors.
 
     Args:
-        thread_id: Current thread ID.
         query: Search query — typically the company name or website URL.
     """
     api_key = os.getenv("LINKUP_API_KEY", "")
@@ -137,25 +145,22 @@ def enrich_from_linkup(
         log.info("[rfp_agent] LINKUP_API_KEY not set — skipping enrichment")
         return json.dumps({"ok": False, "reason": "LINKUP_API_KEY not configured"})
 
+    tid = _thread_id(config)
     try:
         resp = httpx.post(
             "https://api.linkup.so/v1/search",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "q": query,
-                "depth": "standard",
-                "outputType": "sourcedAnswer",
-            },
+            json={"q": query, "depth": "standard", "outputType": "sourcedAnswer"},
             timeout=10.0,
         )
         resp.raise_for_status()
         data = resp.json()
         answer = data.get("answer", "") or data.get("output", "")
 
-        deal = get_deal(thread_id) or {}
+        deal = get_deal(tid) or {}
         deal["linkup_context"] = answer
         deal["linkup_query"] = query
-        set_deal(thread_id, deal)
+        set_deal(tid, deal)
 
         log.info("[rfp_agent] Linkup enrichment ok for query=%r", query)
         return json.dumps({"ok": True, "context_chars": len(answer), "preview": answer[:300]})
@@ -167,19 +172,15 @@ def enrich_from_linkup(
 
 @tool
 def render_deal_context(
-    thread_id: str,
+    config: Annotated[RunnableConfig, InjectedToolArg],
 ) -> str:
     """Render the DealContextCard surface in the canvas.
 
     Call this AFTER extract_seed_fields (and optionally enrich_from_linkup).
-    Emits createSurface on the first call; updateComponents + updateDataModel
-    on subsequent calls within the same session (deduplication handled by
-    SurfaceCanvas on the frontend, but we track here for correctness).
-
-    Args:
-        thread_id: Current thread ID.
+    Call ONCE per turn.
     """
-    deal = get_deal(thread_id) or {}
+    tid = _thread_id(config)
+    deal = get_deal(tid) or {}
     archetype = deal.get("archetype", "UNKNOWN")
     fields = deal.get("fields", {})
     readiness = deal.get("readiness", 0.0)
@@ -188,19 +189,17 @@ def render_deal_context(
     surface_created = deal.get("surface_created", False)
 
     blockers = get_blockers_for_archetype(archetype)
-    blocker_names = [b["name"] for b in blockers]
-
-    field_list = []
-    for name in blocker_names:
-        f = fields.get(name, {})
-        field_list.append({
-            "name": name,
-            "label": f.get("label", name),
-            "value": f.get("value", ""),
-            "status": f.get("status", "MISSING"),
-            "source_quote": f.get("source_quote", ""),
-            "why_it_matters": f.get("why_it_matters", ""),
-        })
+    field_list = [
+        {
+            "name": b["name"],
+            "label": fields.get(b["name"], {}).get("label", b["label"]),
+            "value": fields.get(b["name"], {}).get("value", ""),
+            "status": fields.get(b["name"], {}).get("status", "MISSING"),
+            "source_quote": fields.get(b["name"], {}).get("source_quote", ""),
+            "why_it_matters": fields.get(b["name"], {}).get("why_it_matters", b["why_it_matters"]),
+        }
+        for b in blockers
+    ]
 
     payload = {
         "archetype": archetype,
@@ -212,23 +211,27 @@ def render_deal_context(
         "fields": field_list,
     }
 
-    schema = _build_deal_context_schema(archetype, company_name, readiness, field_list)
+    components = _build_components(archetype, company_name, readiness, field_list)
 
-    ops = [a2ui.update_components(SURFACE_DEAL, schema), a2ui.update_data_model(SURFACE_DEAL, payload)]
+    ops: list = [
+        a2ui.update_components(SURFACE_DEAL, components),
+        a2ui.update_data_model(SURFACE_DEAL, payload),
+    ]
     if not surface_created:
         ops = [a2ui.create_surface(SURFACE_DEAL, catalog_id=CATALOG_ID)] + ops
         deal["surface_created"] = True
-        set_deal(thread_id, deal)
+        set_deal(tid, deal)
 
     return a2ui.render(operations=ops)
 
 
-def _build_deal_context_schema(
+def _build_components(
     archetype: str,
     company_name: str,
     readiness: float,
     field_list: list[dict],
-) -> dict:
+) -> list[dict]:
+    """Build the flat A2UI component list (no 'props' wrapper — flat keys per spec)."""
     stated = [f for f in field_list if f["status"] == "STATED"]
     inferred = [f for f in field_list if f["status"] == "INFERRED"]
     missing = [f for f in field_list if f["status"] == "MISSING"]
@@ -238,43 +241,9 @@ def _build_deal_context_schema(
     if company_name:
         title = f"{company_name} — {title}"
 
-    def field_card_id(f: dict) -> str:
-        return f"field-{f['name']}"
+    comps: list[dict] = []
 
-    def field_row(f: dict, idx: int) -> list[dict]:
-        status_tone = {"STATED": "positive", "INFERRED": "warning", "MISSING": "danger"}.get(f["status"], "neutral")
-        card_id = field_card_id(f)
-        text_id = f"text-{f['name']}"
-        badge_id = f"badge-{f['name']}"
-        reason_id = f"reason-{f['name']}"
-
-        components = [
-            {"id": badge_id, "type": "Badge", "props": {"label": f["status"], "tone": status_tone}},
-        ]
-
-        if f["status"] in ("STATED", "INFERRED") and f.get("value"):
-            components.append({"id": text_id, "type": "Text", "props": {"text": f["value"], "size": "sm"}})
-        else:
-            components.append({"id": text_id, "type": "Text", "props": {"text": f.get("why_it_matters", "Required"), "size": "sm", "tone": "muted"}})
-
-        components.append({
-            "id": card_id,
-            "type": "Card",
-            "props": {
-                "child": f"row-inner-{f['name']}",
-                "tone": "warning" if f["status"] == "MISSING" else "default",
-            },
-        })
-        components.append({
-            "id": f"row-inner-{f['name']}",
-            "type": "Stack",
-            "props": {"children": [badge_id, text_id], "gap": "xs"},
-        })
-        return components
-
-    all_components: list[dict] = []
-
-    # Root stack
+    # Root
     section_ids = ["header-section", "progress-row"]
     if stated:
         section_ids.append("stated-section")
@@ -282,49 +251,54 @@ def _build_deal_context_schema(
         section_ids.append("inferred-section")
     if missing:
         section_ids.append("missing-section")
+    comps.append({"id": "root", "component": "Stack", "children": section_ids, "gap": "md"})
 
-    all_components.append({"id": "root", "type": "Stack", "props": {"children": section_ids, "gap": "md"}})
-
-    # Header
-    all_components.append({"id": "header-section", "type": "Section", "props": {"title": title, "eyebrow": f"ARCHETYPE: {archetype}", "child": "header-badge-row"}})
-    all_components.append({"id": "header-badge-row", "type": "Row", "props": {"children": ["arch-badge"], "gap": "sm"}})
+    # Header section
     arch_tone = {"RTLS": "info", "MES": "positive", "UNKNOWN": "warning"}.get(archetype, "neutral")
-    all_components.append({"id": "arch-badge", "type": "Badge", "props": {"label": archetype, "tone": arch_tone}})
+    comps.append({"id": "header-section", "component": "Section", "title": title, "eyebrow": f"ARCHETYPE · {archetype}", "child": "header-row"})
+    comps.append({"id": "header-row", "component": "Row", "children": ["arch-badge"], "gap": "sm"})
+    comps.append({"id": "arch-badge", "component": "Badge", "label": archetype, "tone": arch_tone})
 
     # Readiness row
-    readiness_tone = "danger" if readiness_pct < 50 else "warning" if readiness_pct < 85 else "positive"
-    all_components.append({"id": "progress-row", "type": "Row", "props": {"children": ["readiness-label", "readiness-badge"], "gap": "sm", "align": "center"}})
-    all_components.append({"id": "readiness-label", "type": "Text", "props": {"text": "Readiness", "size": "sm", "tone": "muted"}})
-    all_components.append({"id": "readiness-badge", "type": "Badge", "props": {"label": f"{readiness_pct}%", "tone": readiness_tone}})
+    r_tone = "danger" if readiness_pct < 50 else "warning" if readiness_pct < 85 else "positive"
+    comps.append({"id": "progress-row", "component": "Row", "children": ["r-label", "r-badge"], "gap": "sm", "align": "center"})
+    comps.append({"id": "r-label", "component": "Text", "text": "Readiness", "size": "sm", "tone": "muted"})
+    comps.append({"id": "r-badge", "component": "Badge", "label": f"{readiness_pct}%", "tone": r_tone})
 
-    # STATED fields
+    def add_field_card(f: dict) -> None:
+        fid = f["name"]
+        s_tone = {"STATED": "positive", "INFERRED": "warning", "MISSING": "danger"}.get(f["status"], "neutral")
+        card_tone = "default" if f["status"] in ("STATED", "CONFIRMED") else "warning" if f["status"] == "INFERRED" else "default"
+
+        body_text = f["value"] if f["status"] in ("STATED", "INFERRED") and f.get("value") else f.get("why_it_matters", "Required — not yet captured.")
+
+        comps.append({"id": f"card-{fid}", "component": "Card", "child": f"inner-{fid}", "tone": card_tone})
+        comps.append({"id": f"inner-{fid}", "component": "Stack", "children": [f"badge-{fid}", f"text-{fid}"], "gap": "xs"})
+        comps.append({"id": f"badge-{fid}", "component": "Badge", "label": f["label"] + " · " + f["status"], "tone": s_tone})
+        comps.append({"id": f"text-{fid}", "component": "Text", "text": body_text, "size": "sm", "tone": "muted" if f["status"] == "MISSING" else "default"})
+
+    # STATED
     if stated:
-        stated_field_ids = [field_card_id(f) for f in stated]
-        all_components.append({"id": "stated-section", "type": "Section", "props": {"title": f"Captured ({len(stated)})", "child": "stated-stack"}})
-        all_components.append({"id": "stated-stack", "type": "Stack", "props": {"children": stated_field_ids, "gap": "sm"}})
+        comps.append({"id": "stated-section", "component": "Section", "title": f"Captured ({len(stated)})", "child": "stated-stack"})
+        comps.append({"id": "stated-stack", "component": "Stack", "children": [f"card-{f['name']}" for f in stated], "gap": "sm"})
         for f in stated:
-            for comp in field_row(f, 0):
-                all_components.append(comp)
+            add_field_card(f)
 
-    # INFERRED fields
+    # INFERRED
     if inferred:
-        inferred_field_ids = [field_card_id(f) for f in inferred]
-        all_components.append({"id": "inferred-section", "type": "Section", "props": {"title": f"Inferred ({len(inferred)})", "child": "inferred-stack"}})
-        all_components.append({"id": "inferred-stack", "type": "Stack", "props": {"children": inferred_field_ids, "gap": "sm"}})
+        comps.append({"id": "inferred-section", "component": "Section", "title": f"Inferred ({len(inferred)})", "child": "inferred-stack"})
+        comps.append({"id": "inferred-stack", "component": "Stack", "children": [f"card-{f['name']}" for f in inferred], "gap": "sm"})
         for f in inferred:
-            for comp in field_row(f, 0):
-                all_components.append(comp)
+            add_field_card(f)
 
-    # MISSING fields
+    # MISSING
     if missing:
-        missing_field_ids = [field_card_id(f) for f in missing]
-        all_components.append({"id": "missing-section", "type": "Section", "props": {"title": f"Missing — chase these ({len(missing)})", "child": "missing-stack"}})
-        all_components.append({"id": "missing-stack", "type": "Stack", "props": {"children": missing_field_ids, "gap": "sm"}})
+        comps.append({"id": "missing-section", "component": "Section", "title": f"Gaps to chase ({len(missing)})", "child": "missing-stack"})
+        comps.append({"id": "missing-stack", "component": "Stack", "children": [f"card-{f['name']}" for f in missing], "gap": "sm"})
         for f in missing:
-            for comp in field_row(f, 0):
-                all_components.append(comp)
+            add_field_card(f)
 
-    return {"components": all_components}
+    return comps
 
 
 # ─── System prompt ────────────────────────────────────────────────────────────
@@ -351,35 +325,32 @@ Classify the dump as "RTLS", "MES", or "UNKNOWN".
 
 ### Step 2 — Extract seed fields
 Call `extract_seed_fields` with:
-  - thread_id from system context
   - archetype ("RTLS", "MES", or "UNKNOWN")
   - company_name and company_website if mentioned (else empty string)
-  - All fields you can identify: STATED (verbatim), INFERRED (derived), or MISSING
+  - All fields you can identify from the RTLS or MES blocker list
 
 For STATED fields: include the verbatim source_quote.
 For MISSING fields: include a one-sentence why_it_matters deal-killer rationale.
 
 ### Step 3 — Enrich from Linkup (if company detected)
-If company_name or company_website was provided, call `enrich_from_linkup` immediately
-after extract_seed_fields. Use the returned context to upgrade MISSING fields to INFERRED
-where the company research fills gaps. Re-call extract_seed_fields with the updated fields.
+If company_name or company_website was provided, call `enrich_from_linkup` with the
+company name or URL as the query. Use returned context to upgrade MISSING → INFERRED
+where the research fills gaps. Re-call extract_seed_fields with updated fields.
 
 ### Step 4 — Render the deal context card
-Call `render_deal_context` to push the DealContextCard surface to the canvas.
+Call `render_deal_context` — no arguments needed. Call ONCE per turn.
 
 ### Step 5 — Chase missing blockers
-After rendering, in the same response, ask about the top 2-3 MISSING hard blockers.
-Batch your questions. For each one, explain WHY it matters using the deal-killer rationale.
-Keep questions focused — one clear ask per blocker.
+After rendering, ask about the top 2–3 MISSING hard blockers. Batch your questions.
+For each, explain WHY it matters using the deal-killer rationale. One clear ask per blocker.
 
 ## Hard rules
 - Call `extract_seed_fields` BEFORE `render_deal_context` on every turn with new info.
-- Call `render_deal_context` ONCE per turn.
-- Never fabricate field values. STATED = customer said it verbatim. INFERRED = you derived it.
-- Never skip the archetype triage step.
+- Call `render_deal_context` ONCE per turn. No arguments — it reads from session state.
+- Never fabricate field values. STATED = verbatim from customer. INFERRED = you derived it.
+- Never skip archetype triage.
 - Never write proposals, pricing, or vendor recommendations.
-- Grouped output only — no wall-of-text responses.
-- Chase hard blockers first, in priority order.
+- Grouped output only — no wall of text.
 
 ## Field status rules
 - STATED: customer said it; include source_quote.
@@ -401,11 +372,7 @@ def _build_model() -> ChatGoogleGenerativeAI:
 
 def build_rfp_agent():
     if os.getenv("OFFLINE") == "1":
-        # Reuse the fixed-agent offline stub: drives the same create_agent
-        # ReAct loop without a Gemini API key. Only the render_deal_context
-        # tool is called in the offline path (no API key needed).
         from src.offline_fixed import build_offline_fixed_agent
-
         return build_offline_fixed_agent(render_deal_context, SYSTEM_PROMPT)
 
     return create_agent(
