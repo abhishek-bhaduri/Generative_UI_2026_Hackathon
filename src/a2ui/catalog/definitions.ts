@@ -274,6 +274,36 @@ export const definitions = {
       multi: z.boolean().optional(),
     }),
   },
+
+  // ── RFP Intake Cockpit components ──────────────────────────────────────────
+
+  DealContextCard: {
+    description:
+      "RFP intake field card. Shows a single deal field with its status badge " +
+      "(STATED=green, INFERRED=amber, MISSING=red), the captured value or a " +
+      "'why we need this' rationale for missing fields, and an optional source " +
+      "quote on hover for STATED fields. Use inside a Stack or Grid.",
+    props: z.object({
+      fieldName: z.string(),
+      label: z.string(),
+      value: z.string(),
+      status: z.enum(["STATED", "INFERRED", "MISSING", "CONFIRMED"]),
+      sourceQuote: z.string().optional(),
+      whyItMatters: z.string().optional(),
+    }),
+  },
+
+  ReadinessMeter: {
+    description:
+      "RFP completeness indicator. Shows a percentage bar that climbs as " +
+      "hard-blocker fields are filled and confirmed. tone reflects the stage: " +
+      "danger (<50%), warning (50–84%), positive (≥85%).",
+    props: z.object({
+      pct: z.number().int().min(0).max(100),
+      label: z.string().optional(),
+      tone: z.enum(["danger", "warning", "positive"]).optional(),
+    }),
+  },
 };
 
 export type Definitions = typeof definitions;

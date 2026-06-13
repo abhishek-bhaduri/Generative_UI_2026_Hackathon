@@ -68,6 +68,12 @@ component must have `id: "root"`.
 - **ChoiceChips** { label, options: [{label,value}], value: {path}, multi?: bool }
 
 
+### RFP Intake Cockpit (use only in rfp-deal surfaces)
+- **DealContextCard** { fieldName: string, label: string, value: string, status: "STATED"|"INFERRED"|"MISSING"|"CONFIRMED", sourceQuote?: string, whyItMatters?: string }
+    Single deal field card with color-coded status badge. STATED=green (verbatim), INFERRED=amber (derived), MISSING=red (with whyItMatters rationale). Use inside a Stack or Grid.
+- **ReadinessMeter** { pct: 0-100, label?: string, tone?: "danger"|"warning"|"positive" }
+    Completeness bar. Climbs as hard blockers are filled. Use at the top of the DealContextCard surface.
+
 ### Rules
 1. Exactly one component has id="root". Everything else must be reachable from root.
 2. Repeating content uses `children: { componentId: "card-id", path: "/items" }`.

@@ -1,0 +1,52 @@
+/* RFP Intake Cockpit — brand tokens scoped to .rfp-cockpit-root */
+
+.rfp-cockpit-root {
+  /* Sales-appropriate accent — deep blue-violet for trust + authority */
+  --brand-primary: #3b52cc;
+  --brand-primary-hover: #2d3fa8;
+  --brand-gradient: linear-gradient(135deg, #3b52cc 0%, #6b3fa0 100%);
+
+  /* Surface tokens: inherit from A2UI theme.css but allow override here */
+  --rfp-header-bg: color-mix(in oklab, var(--brand-primary) 8%, var(--surface));
+  --rfp-header-border: color-mix(in oklab, var(--brand-primary) 20%, var(--line));
+
+  font-family: var(--font-plus-jakarta, "Plus Jakarta Sans", sans-serif);
+}
+
+.rfp-cockpit-root .copilot-chat-wrapper {
+  background: var(--surface);
+}
+
+/* Nav bar */
+.rfp-nav {
+  height: 48px;
+  border-bottom: 1px solid var(--rfp-header-border);
+  background: var(--rfp-header-bg);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.rfp-nav-logo {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--brand-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rfp-nav-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--brand-primary) 12%, transparent);
+  color: var(--brand-primary);
+  font-family: var(--font-spline-mono, monospace);
+}

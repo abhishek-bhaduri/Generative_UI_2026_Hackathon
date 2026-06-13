@@ -1049,6 +1049,101 @@ function Slot({ render }: { render: ReactNode }) {
   return <>{render}</>;
 }
 
+// ── RFP Intake Cockpit renderers ─────────────────────────────────────────────
+
+const STATUS_TONE: Record<string, string> = {
+  STATED: "var(--mint)",
+  INFERRED: "var(--warning, #e89232)",
+  MISSING: "var(--danger, #d54b53)",
+  CONFIRMED: "var(--mint)",
+};
+
+const STATUS_TEXT_TONE: Record<string, "positive" | "warning" | "danger" | "neutral"> = {
+  STATED: "positive",
+  INFERRED: "warning",
+  MISSING: "danger",
+  CONFIRMED: "positive",
+};
+
+const DealContextCard = ({
+  props,
+}: RendererProps<{
+  fieldName: string;
+  label: string;
+  value: string;
+  status: "STATED" | "INFERRED" | "MISSING" | "CONFIRMED";
+  sourceQuote?: string;
+  whyItMatters?: string;
+}>) => {
+  const { label, value, status, sourceQuote, whyItMatters } = props;
+  const isMissing = status === "MISSING";
+  const tone = STATUS_TEXT_TONE[status] ?? "neutral";
+
+  return (
+    <div
+      className={clsx(
+        "rounded-lg border px-3 py-2.5 flex flex-col gap-1 text-[13px]",
+        isMissing
+          ? "border-[var(--danger,#d54b53)] bg-[color-mix(in_oklab,var(--danger,#d54b53)_6%,var(--surface))]"
+          : "border-[var(--line)] bg-[var(--surface)]",
+      )}
+      title={sourceQuote ? `Source: "${sourceQuote}"` : undefined}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={clsx(
+            "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold mono uppercase tracking-wider",
+            tone === "positive" && "bg-[color-mix(in_oklab,var(--mint)_18%,transparent)] text-[#0d6b4f]",
+            tone === "warning" && "bg-[color-mix(in_oklab,#e89232_15%,transparent)] text-[#a05c00]",
+            tone === "danger" && "bg-[color-mix(in_oklab,#d54b53_12%,transparent)] text-[#a0202a]",
+            tone === "neutral" && "bg-[var(--bg)] text-[var(--ink-2)]",
+          )}
+        >
+          {status}
+        </span>
+        <span className="font-medium text-[var(--ink)] truncate">{label}</span>
+      </div>
+      {isMissing ? (
+        <span className="text-[var(--ink-2)] leading-snug line-clamp-2">
+          {whyItMatters || "Required for scoping."}
+        </span>
+      ) : (
+        <span className="text-[var(--ink)] leading-snug line-clamp-3">{value}</span>
+      )}
+    </div>
+  );
+};
+
+const ReadinessMeter = ({
+  props,
+}: RendererProps<{
+  pct: number;
+  label?: string;
+  tone?: "danger" | "warning" | "positive";
+}>) => {
+  const pct = Math.min(100, Math.max(0, props.pct ?? 0));
+  const tone = props.tone ?? (pct < 50 ? "danger" : pct < 85 ? "warning" : "positive");
+  const barColor =
+    tone === "positive" ? "var(--mint)" : tone === "warning" ? "#e89232" : "#d54b53";
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between text-[12px]">
+        <span className="text-[var(--ink-2)]">{props.label ?? "Readiness"}</span>
+        <span className="font-semibold text-[var(--ink)]" style={{ color: barColor }}>
+          {pct}%
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-[var(--line)] overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, background: barColor }}
+        />
+      </div>
+    </div>
+  );
+};
+
 export const renderers = {
   Stack,
   Row,
@@ -1071,4 +1166,6 @@ export const renderers = {
   DataTable,
   Button,
   ChoiceChips,
+  DealContextCard,
+  ReadinessMeter,
 };

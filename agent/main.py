@@ -35,6 +35,7 @@ _install_doc_inlining()
 
 from src.dynamic_agent import graph as dynamic_graph  # noqa: E402
 from src.fixed_agent import graph as fixed_graph  # noqa: E402
+from src.rfp_agent import graph as rfp_graph  # noqa: E402
 
 app = FastAPI(title="A2UI Demo Agents")
 
@@ -72,6 +73,17 @@ add_langgraph_fastapi_endpoint(
         config=_AGENT_CONFIG,
     ),
     path="/dynamic",
+)
+
+add_langgraph_fastapi_endpoint(
+    app=app,
+    agent=LangGraphAGUIAgent(
+        name="rfp_agent",
+        description="RFP Intake Cockpit — RTLS/MES deal intake with archetype triage and gap elicitation.",
+        graph=rfp_graph,
+        config=_AGENT_CONFIG,
+    ),
+    path="/rfp",
 )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -139,6 +151,7 @@ def root():
     agents = {
         "fixed_agent": "/fixed/",
         "dynamic_agent": "/dynamic/",
+        "rfp_agent": "/rfp/",
     }
     if _legal_registered:
         agents["legal_agent"] = "/legal/"
