@@ -22,7 +22,7 @@ from langchain_core.tools import InjectedToolArg
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
 
-from src.catalog import CATALOG_ID, CATALOG_PROMPT
+from src.catalog import CATALOG_ID
 from src.deal_store import get_deal, set_deal
 from src.rfp_hard_blockers import (
     PROVISIONAL,
@@ -153,18 +153,26 @@ def enrich_from_linkup(
         return json.dumps({"ok": False, "reason": "LINKUP_API_KEY not configured"})
 
     tid = _thread_id(config)
+    deal = get_deal(tid) or {}
+    if deal.get("linkup_query") == query and deal.get("linkup_context"):
+        return json.dumps({
+            "ok": True,
+            "cached": True,
+            "context_chars": len(deal["linkup_context"]),
+            "preview": deal["linkup_context"][:300],
+        })
+
     try:
         resp = httpx.post(
             "https://api.linkup.so/v1/search",
             headers={"Authorization": f"Bearer {api_key}"},
             json={"q": query, "depth": "standard", "outputType": "sourcedAnswer"},
-            timeout=10.0,
+            timeout=4.0,
         )
         resp.raise_for_status()
         data = resp.json()
         answer = data.get("answer", "") or data.get("output", "")
 
-        deal = get_deal(tid) or {}
         deal["linkup_context"] = answer
         deal["linkup_query"] = query
         set_deal(tid, deal)
@@ -238,6 +246,7 @@ def render_deal_context(
     readiness = deal.get("readiness", 0.0)
     company_name = deal.get("company_name", "")
     linkup_context = deal.get("linkup_context", "")
+    linkup_query = deal.get("linkup_query", "")
     surface_created = deal.get("surface_created", False)
 
     blockers = get_blockers_for_archetype(archetype)
@@ -257,13 +266,15 @@ def render_deal_context(
         "archetype": archetype,
         "company_name": company_name,
         "linkup_enriched": bool(linkup_context),
+        "linkup_query": linkup_query,
+        "linkup_context": linkup_context,
         "readiness": readiness,
         "readiness_pct": f"{int(readiness * 100)}%",
         "provisional": PROVISIONAL,
         "fields": field_list,
     }
 
-    components = _build_components(archetype, company_name, readiness, field_list)
+    components = _build_components(archetype, company_name, readiness, field_list, linkup_context)
 
     ops: list = [
         a2ui.update_components(SURFACE_DEAL, components),
@@ -282,6 +293,7 @@ def _build_components(
     company_name: str,
     readiness: float,
     field_list: list[dict],
+    linkup_context: str = "",
 ) -> list[dict]:
     """Build the flat A2UI component list (no 'props' wrapper — flat keys per spec)."""
     stated = [f for f in field_list if f["status"] == "STATED"]
@@ -298,6 +310,8 @@ def _build_components(
 
     # Root
     section_ids = ["header-section", "progress-row"]
+    if linkup_context:
+        section_ids.append("company-section")
     if stated:
         section_ids.append("stated-section")
     if inferred:
@@ -319,6 +333,16 @@ def _build_components(
     comps.append({"id": "progress-row", "component": "Row", "children": ["r-label", "r-badge"], "gap": "sm", "align": "center"})
     comps.append({"id": "r-label", "component": "Text", "text": "Readiness", "size": "sm", "tone": "muted"})
     comps.append({"id": "r-badge", "component": "Badge", "label": f"{readiness_pct}%", "tone": r_tone})
+
+    if linkup_context:
+        preview = linkup_context.strip().replace("\n", " ")
+        if len(preview) > 520:
+            preview = preview[:517].rstrip() + "..."
+        comps.append({"id": "company-section", "component": "Section", "title": "Company research", "eyebrow": "LINKUP", "child": "company-card"})
+        comps.append({"id": "company-card", "component": "Card", "child": "company-stack", "tone": "info"})
+        comps.append({"id": "company-stack", "component": "Stack", "children": ["company-badge", "company-text"], "gap": "xs"})
+        comps.append({"id": "company-badge", "component": "Badge", "label": "Background context", "tone": "info"})
+        comps.append({"id": "company-text", "component": "Text", "text": preview, "size": "sm", "tone": "default"})
 
     def add_field_card(f: dict) -> None:
         fid = f["name"]
@@ -446,10 +470,11 @@ The value for MISSING fields must be an empty string "".
 For STATED fields: include the verbatim source_quote from the dump.
 For INFERRED fields: set value to your inference and source_quote to your reasoning.
 
-### Step 3 — Enrich from Linkup (if company detected)
+### Step 3 — Enrich from LinkUp (if company detected)
 If company_name or company_website was provided, call `enrich_from_linkup` with the
-company name or URL as the query. Use returned context to upgrade MISSING → INFERRED
-where the research fills gaps. Re-call extract_seed_fields with updated fields.
+company name or URL as the query. This is supporting company context only: do not wait
+on it to fabricate blockers. If it succeeds, the canvas will show the LinkUp context.
+If it fails or is missing a key, continue normally.
 
 ### Step 4 — Render the deal context card
 Call `render_deal_context` — no arguments needed. Call ONCE per turn.
@@ -479,7 +504,8 @@ After any canvas update, acknowledge briefly and ask only for the next most impo
 - INFERRED: you derived it from context or Linkup; explain basis.
 - MISSING: customer hasn't provided it; show why_it_matters.
 
-{CATALOG_PROMPT}
+The canvas surface is fixed for this demo. Use the tools to store deal fields, optionally
+fetch company context, then render the cockpit. Do not generate custom A2UI schemas.
 """
 
 
