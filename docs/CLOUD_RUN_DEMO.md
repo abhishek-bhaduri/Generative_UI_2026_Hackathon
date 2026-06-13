@@ -41,7 +41,18 @@ state if Redis is absent.
 
 ## Build And Deploy
 
-From the repo root:
+Option A: use the helper script from the repo root:
+
+```bash
+export PROJECT_ID="YOUR_PROJECT_ID"
+export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+export LINKUP_API_KEY="YOUR_LINKUP_API_KEY" # optional
+export REDIS_URL="YOUR_REDIS_URL"           # optional
+
+./scripts/deploy-cloud-run.sh
+```
+
+Option B: run the raw command yourself:
 
 ```bash
 gcloud run deploy rfp-intake-cockpit \
