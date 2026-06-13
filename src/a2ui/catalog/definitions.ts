@@ -277,6 +277,18 @@ export const definitions = {
 
   // ── RFP Intake Cockpit components ──────────────────────────────────────────
 
+  TextInput: {
+    description:
+      "Single-line text input with a Save button. Dispatches a 'submit_field' event " +
+      "with { fieldName, value } when submitted (Enter key or Save button). Use inside " +
+      "MISSING field cards so the rep can type an answer directly in the canvas.",
+    props: z.object({
+      fieldName: z.string(),
+      label: z.string(),
+      placeholder: z.string().optional(),
+    }),
+  },
+
   DealContextCard: {
     description:
       "RFP intake field card. Shows a single deal field with its status badge " +

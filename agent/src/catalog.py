@@ -73,6 +73,8 @@ component must have `id: "root"`.
     Single deal field card with color-coded status badge. STATED=green (verbatim), INFERRED=amber (derived), MISSING=red (with whyItMatters rationale). Use inside a Stack or Grid.
 - **ReadinessMeter** { pct: 0-100, label?: string, tone?: "danger"|"warning"|"positive" }
     Completeness bar. Climbs as hard blockers are filled. Use at the top of the DealContextCard surface.
+- **TextInput** { fieldName: string, label: string, placeholder?: string }
+    Inline text input with Save button. Dispatches submit_field event {fieldName, value} on save. Place inside MISSING field cards so the rep can answer directly in the canvas.
 
 ### Rules
 1. Exactly one component has id="root". Everything else must be reachable from root.

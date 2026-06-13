@@ -265,17 +265,30 @@ def _build_components(
     comps.append({"id": "r-label", "component": "Text", "text": "Readiness", "size": "sm", "tone": "muted"})
     comps.append({"id": "r-badge", "component": "Badge", "label": f"{readiness_pct}%", "tone": r_tone})
 
-    def add_field_card(f: dict) -> None:
+    def add_field_card(f: dict, interactive: bool = False) -> None:
         fid = f["name"]
         s_tone = {"STATED": "positive", "INFERRED": "warning", "MISSING": "danger"}.get(f["status"], "neutral")
         card_tone = "default" if f["status"] in ("STATED", "CONFIRMED") else "warning" if f["status"] == "INFERRED" else "default"
 
         body_text = f["value"] if f["status"] in ("STATED", "INFERRED") and f.get("value") else f.get("why_it_matters", "Required — not yet captured.")
 
+        inner_children = [f"badge-{fid}", f"text-{fid}"]
+        if interactive and f["status"] == "MISSING":
+            inner_children.append(f"input-{fid}")
+
         comps.append({"id": f"card-{fid}", "component": "Card", "child": f"inner-{fid}", "tone": card_tone})
-        comps.append({"id": f"inner-{fid}", "component": "Stack", "children": [f"badge-{fid}", f"text-{fid}"], "gap": "xs"})
+        comps.append({"id": f"inner-{fid}", "component": "Stack", "children": inner_children, "gap": "xs"})
         comps.append({"id": f"badge-{fid}", "component": "Badge", "label": f["label"] + " · " + f["status"], "tone": s_tone})
         comps.append({"id": f"text-{fid}", "component": "Text", "text": body_text, "size": "sm", "tone": "muted" if f["status"] == "MISSING" else "default"})
+
+        if interactive and f["status"] == "MISSING":
+            comps.append({
+                "id": f"input-{fid}",
+                "component": "TextInput",
+                "fieldName": fid,
+                "label": f["label"],
+                "placeholder": f"Your answer for: {f['label']}",
+            })
 
     # STATED
     if stated:
@@ -302,7 +315,7 @@ def _build_components(
             stack_children.append("missing-more")
         comps.append({"id": "missing-stack", "component": "Stack", "children": stack_children, "gap": "sm"})
         for f in top_missing:
-            add_field_card(f)
+            add_field_card(f, interactive=True)
         if rest_count:
             comps.append({"id": "missing-more", "component": "Text", "text": f"+ {rest_count} more gaps — answer the questions above to unlock them.", "size": "sm", "tone": "muted"})
 
@@ -374,9 +387,17 @@ where the research fills gaps. Re-call extract_seed_fields with updated fields.
 ### Step 4 — Render the deal context card
 Call `render_deal_context` — no arguments needed. Call ONCE per turn.
 
-### Step 5 — Chase missing blockers
+### Step 5 — Chase missing blockers in chat
 After rendering, ask about the top 2–3 MISSING hard blockers. Batch your questions.
 For each, explain WHY it matters using the deal-killer rationale. One clear ask per blocker.
+The canvas already shows TextInput boxes for the top 3 gaps — remind the user they can type directly in the canvas OR answer here in chat.
+
+### Handling canvas input events (log_a2ui_event)
+When you receive a `log_a2ui_event` tool result with event name "submit_field":
+1. Extract `fieldName` and `value` from the context.
+2. Call `extract_seed_fields` with that field as status="STATED", value=the submitted value, source_quote=the submitted value. Keep all other fields unchanged by re-extracting them from deal state.
+3. Call `render_deal_context` to update the canvas with the new value.
+4. Acknowledge the update briefly in chat and ask about the next most important gap.
 
 ## Hard rules
 - Call `extract_seed_fields` BEFORE `render_deal_context` on every turn with new info.

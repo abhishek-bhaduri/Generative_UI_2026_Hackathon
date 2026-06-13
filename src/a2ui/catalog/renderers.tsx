@@ -1,6 +1,7 @@
 "use client";
 
 import { clsx } from "clsx";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import {
   Bar,
@@ -1065,6 +1066,48 @@ const STATUS_TEXT_TONE: Record<string, "positive" | "warning" | "danger" | "neut
   CONFIRMED: "positive",
 };
 
+const TextInput = ({
+  props,
+  dispatch,
+}: RendererProps<{
+  fieldName: string;
+  label: string;
+  placeholder?: string;
+}>) => {
+  const [value, setValue] = useState("");
+  return (
+    <div className="flex flex-col gap-1.5 pt-1">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && value.trim()) {
+              dispatch?.({ event: { name: "submit_field", context: { fieldName: props.fieldName, value: value.trim() } } } as never);
+              setValue("");
+            }
+          }}
+          placeholder={props.placeholder ?? "Type your answer…"}
+          className="flex-1 px-3 py-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] text-[13px] text-[var(--ink)] focus:outline-none focus:border-[var(--brand-primary,var(--ink-2))] transition"
+        />
+        <button
+          type="button"
+          disabled={!value.trim()}
+          onClick={() => {
+            if (!value.trim()) return;
+            dispatch?.({ event: { name: "submit_field", context: { fieldName: props.fieldName, value: value.trim() } } } as never);
+            setValue("");
+          }}
+          className="px-4 py-2 rounded-[10px] bg-[var(--ink)] text-white mono text-[11px] font-medium disabled:opacity-40 transition"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const DealContextCard = ({
   props,
 }: RendererProps<{
@@ -1166,6 +1209,7 @@ export const renderers = {
   DataTable,
   Button,
   ChoiceChips,
+  TextInput,
   DealContextCard,
   ReadinessMeter,
 };
