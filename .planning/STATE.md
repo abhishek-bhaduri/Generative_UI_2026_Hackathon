@@ -3,7 +3,7 @@
 **Project:** RFP Intake Cockpit
 **Hackathon:** London A2A & A2UI Hackathon, June 13, 2026
 **Build window:** 5 hours
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-13 (post-hackathon)
 
 ---
 
@@ -11,24 +11,51 @@
 
 **Core value:** The agent ELICITS and VERIFIES. It turns a messy requirements dump into a grouped, verified RFP by chasing the critical fields B2B sales customers chronically omit — using generative UI that a chat box plainly cannot replicate.
 
-**The "whoa":** Paste "replace our SIEM by Q3 because auditor" → archetype badge → five grouped blocks with ~40% MISSING → batched gap chases with deal-killer rationale → readiness climbs 40%→95% → Confirm gate → final RFP renders.
+**The "whoa":** Paste "replace our SIEM by Q3 because auditor" → archetype badge → field cards with STATED/INFERRED/MISSING tags → inline text inputs for gap answers → readiness score climbs as rep fills gaps.
 
-**Current focus:** Phase 1 — Foundation (planning complete; build not started)
+**Final status:** Phase 1 shipped. Phases 2–3 not attempted within the build window.
 
 ---
 
-## Current Position
+## Final Position
 
-**Phase:** 1 — Foundation
-**Plan:** Not started
-**Status:** Planning complete
-**Progress:** [----------] 0%
+**Phase:** 1 — Foundation ✅ Complete
+**Status:** Shipped as demo artefact
 
 | Phase | Status | Completed |
 |-------|--------|-----------|
-| 1. Foundation | Not started | - |
-| 2. Elicitation + Verification Cockpit | Not started | - |
-| 3. Final RFP + Polish + Demo | Not started | - |
+| 1. Foundation | ✅ Complete | June 13, 2026 |
+| 2. Elicitation + Verification Cockpit | Not built | — |
+| 3. Final RFP + Polish + Demo | Not built | — |
+
+---
+
+## What Was Built (Phase 1)
+
+### Agent (`agent/src/`)
+- **`rfp_agent.py`** (~950 lines) — LangGraph ReAct loop with tools: `extract_seed_fields`, `enrich_from_linkup`, `render_deal_context`. Full system prompt with archetype triage, field name table, and event handling for canvas TextInput submissions.
+- **`rfp_hard_blockers.py`** — RTLS/MES hard-blocker rubric: 4 universal + 5 RTLS-specific + 7 MES-specific fields. `PROVISIONAL` flag for rubric swap seam.
+- **`deal_store.py`** — Redis/in-memory dual-backend deal storage. Auto-selects Redis when `REDIS_URL` is set; falls back to in-memory dict.
+
+### Frontend (`src/`)
+- **`src/app/(rfp)/`** — Route group: `layout.tsx`, `rfp-cockpit.css` (full CSS token block), `rfp-intake/page.tsx` (split layout)
+- **`src/app/api/copilotkit-rfp/route.ts`** — Dedicated CopilotKit runtime endpoint
+- **`src/components/rfp-intake/Providers.tsx`** — CopilotKit provider with MirrorRenderer
+- **`src/a2ui/catalog/definitions.ts`** — Added `TextInput`, `DealContextCard`, `ReadinessMeter`
+- **`src/a2ui/catalog/renderers.tsx`** — React renderers for the above; `TextInput` dispatches `submit_field` events back to the agent
+- **`agent/src/catalog.py`** — Python mirror updated with new components
+
+### Infrastructure
+- **`railway.toml`** — Railway deployment config (single Docker service)
+- **`src/app/api/health/route.ts`** — Health check endpoint
+
+### Bugs fixed during the session
+1. A2UI component format (`{"type","props"}` → flat `{"component",...}`)
+2. `update_components` argument (wrapped dict → plain list)
+3. CSS tokens missing in `(rfp)` scope (`--orange`, `--red` not defined)
+4. `thread_id` mismatch — fixed with `InjectedToolArg` / `RunnableConfig`
+5. LLM calling `extract_seed_fields(fields=[])` — fixed by adding explicit field name table to system prompt
+6. Canvas re-emitting `createSurface` on every turn — fixed with `surface_created` flag in deal state
 
 ---
 
@@ -38,65 +65,37 @@
 
 | Decision | Confidence | Why it matters |
 |----------|------------|----------------|
-| Deal object lives in `deal_store.py`, NOT `AgentState` | HIGH | Phase 2 graph split = zero schema migration; Redis swap = one Protocol change |
-| Phase 1 = single `create_agent` ReAct loop (copy `fixed_agent.py` shape) | HIGH | "Lock first" — working baseline before any split |
-| Five-group taxonomy is final (no sixth group) | HIGH | Validated against MEDDPICC + APMP norms; sixth group breaks cockpit gestalt |
-| HITL confirm gate = `interrupt()` + data-model-write resume | HIGH | Only pattern that avoids orphan `function_call` trap (CR-5) |
+| Deal object lives in `deal_store.py`, NOT `AgentState` | HIGH | Phase 2 graph split = zero schema migration |
+| Redis/in-memory dual backend | HIGH | Zero config locally; production-ready without code changes |
+| PROVISIONAL rubric flag | HIGH | Swap seam: edit `rfp_hard_blockers.py`, flip flag — zero logic changes |
 | `(rfp)` route group parallel to `(pdf)`, no cross-group imports | HIGH | Isolation; follows existing convention |
-| Move `SurfaceCanvas` to `src/components/shared/` | HIGH | First task of Phase 1; zero behavior change; required for `(rfp)` wiring |
-| Archetypes Phase 1: Infra Migration, Security Tooling, Data Platform | MEDIUM-HIGH | Broadest demo coverage |
-| Archetype inference is visible + one-click override | MEDIUM | High demo value; teammate may want silent — confirm if available |
-| PROVISIONAL rubric = MEDDPICC + 3 technical = 11 fields | MEDIUM | Swap seam ready; awaiting teammate validation |
+| TextInput dispatches `submit_field` events via A2UI dispatch | HIGH | Lets rep answer gap questions directly in canvas |
+| Top-3 MISSING cap + "N more" footer | HIGH | Prevents overwhelming the canvas on cold dump |
 
 ### Active Constraints
 
-- Stack is FROZEN: never bump `@copilotkit/*` (1.57.4), `langchain` (1.3.1), `langchain-core` (1.4.0), `langgraph` (1.2.1), `next` (16.1.6), `react` (19.2.4), `zod` (^3.25)
-- LLM is FROZEN: `ChatGoogleGenerativeAI` (Gemini 3.5 Flash) only — no OpenAI compat (CR-2)
-- Every list param in agent tools MUST use a TypedDict element type — never `list[dict]` or `list[Any]` (CR-3)
-- `createSurface` emitted exactly once per surface ID per session — track in `emitted_surfaces` set (CR-4)
-- PROVISIONAL rubric: every reference in code carries `# PROVISIONAL: replace at H+4` comment (MD-8)
-- No PII; synthetic data only; local demo only; no deployment
-
-### Open Items
-
-| Item | Status | Owner | Deadline |
-|------|--------|-------|----------|
-| Final hard-blocker rubric | PROVISIONAL — 11 fields (MEDDPICC + 3 technical) | Teammate | Before Phase 3 |
-| Linkup API key / auth method | Unconfirmed — check sponsor docs at hackathon H+0 | Abhishek | H+0 |
-| Archetype inference: visible vs silent | Recommend visible + one-click override | Confirm with teammate | Phase 1 |
-| Multi-surface dedupe (`rfp-deal` + `rfp-verify` simultaneously) | Unverified — may need close-before-open | Abhishek | Phase 2 |
-
-### Blockers
-
-None at planning complete. First blocker risk: Linkup API key availability at H+0.
+- Stack is FROZEN: `@copilotkit/*` (1.57.4), `langchain` (1.3.1), `langchain-core` (1.4.0), `langgraph` (1.2.1), `next` (16.1.6), `react` (19.2.4)
+- LLM is FROZEN: `ChatGoogleGenerativeAI` (Gemini 3.5 Flash) — no OpenAI compat
+- PROVISIONAL rubric: every reference carries `# PROVISIONAL` comment
 
 ---
 
-## Performance Metrics
+## If Continuing This Project
 
-**Requirements coverage:** 18/18 functional, 8/8 non-functional
-**Critical pitfalls mitigated in plan:** CR-1, CR-2, CR-3, CR-4, CR-5, CR-6, CR-7, MD-2, MD-5, MD-6, MD-7, MD-8 (all documented in ROADMAP.md risk register)
-**Highest-risk task:** FOUND-14 — Confirm & Continue gate (LangGraph `interrupt()` + data-model-write resume)
+### To run locally
+```
+cp agent/.env.example agent/.env   # add GEMINI_API_KEY
+pnpm dev
+```
+Open `http://localhost:3000/rfp-intake`
 
----
+### Next logical step: Phase 2
+- Add `chase_gaps` tool — batched gap questions with deal-killer rationale
+- Add `VerificationGroup` catalog component — five grouped blocks (Commercials, Scope, Technical, Stakeholders, Timeline)
+- Add `ReadinessMeter` live update — climbs 40%→95% as rep answers
+- HITL confirm gate — `interrupt()` + data-model-write resume (hardest piece; see ROADMAP.md CR-5)
 
-## Session Continuity
-
-### To resume work, read:
-1. This file (STATE.md) — current position + decisions
-2. `.planning/ROADMAP.md` — Phase 1 task sketch (critical path, 13 steps)
-3. `.planning/research/ARCHITECTURE.md` §3 (data flow) + §4.1 (Phase 1 `create_agent` pattern)
-4. `.planning/research/PITFALLS.md` — Phase-specific warnings matrix (bottom of file)
-5. `agent/src/fixed_agent.py` — canonical pattern to copy for `rfp_agent.py`
-6. `agent/src/dynamic_agent.py` — HITL action transport pattern (`log_a2ui_event`)
-
-### Next action:
-Run `pnpm doctor` and `pnpm smoke` to establish the green baseline. Then start Phase 1 task 2 (move SurfaceCanvas).
-
-### Demo laptop checklist (fill in at H+4):
-- [ ] `pnpm dev` cold-start confirmed
-- [ ] Hero input 1 (Security Tooling) paste-ready in clipboard manager
-- [ ] Hero input 2 (Infra Migration or Data Platform) paste-ready
-- [ ] `pnpm smoke` passes on demo machine
-- [ ] 60-second pitch rehearsed twice
-- [ ] Backup laptop: repo cloned + `.env` set + cold-tested
+### To swap the PROVISIONAL rubric
+1. Edit the lists in `agent/src/rfp_hard_blockers.py`
+2. Set `PROVISIONAL = False`
+3. `pnpm smoke` — zero logic changes needed elsewhere
